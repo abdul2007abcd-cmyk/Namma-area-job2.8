@@ -288,38 +288,6 @@ export default function App() {
                       : AREA_MAPPINGS[selectedArea] || selectedArea}
                   </span>
                 </button>
-
-                {/* Supabase Connection Status Pill */}
-                <button
-                  onClick={() => setShowSupabaseModal(true)}
-                  id="supabase-status-pill"
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border-2 text-xs font-black cursor-pointer transition-all ${
-                    isLoadingJobs
-                      ? 'bg-slate-100 border-slate-200 text-slate-500 animate-pulse'
-                      : supabaseStatus?.connected && supabaseStatus?.tableExists
-                      ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100/70'
-                      : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100/70'
-                  }`}
-                  title="Supabase Sync Status"
-                >
-                  <Database className={`w-3.5 h-3.5 ${isLoadingJobs ? 'animate-spin' : ''}`} />
-                  <span className="hidden md:inline">
-                    {isLoadingJobs ? 'Syncing...' : supabaseStatus?.connected && supabaseStatus?.tableExists ? 'Supabase Live' : 'Supabase Setup'}
-                  </span>
-                  <span className={`w-1.5 h-1.5 rounded-full ${
-                    isLoadingJobs ? 'bg-slate-400' : supabaseStatus?.connected && supabaseStatus?.tableExists ? 'bg-green-500' : 'bg-amber-500'
-                  }`} />
-                </button>
-
-                {/* Language toggle */}
-                <button
-                  onClick={handleLanguageToggle}
-                  id="header-lang-toggle"
-                  className="flex items-center justify-center w-9 h-9 rounded-xl bg-slate-50 border-2 border-slate-200 hover:bg-slate-100 text-slate-700 transition-all cursor-pointer shadow-xs"
-                  title={currentLanguage === 'en' ? 'Switch to Tamil' : 'ஆங்கிலத்திற்கு மாறவும்'}
-                >
-                  <Globe className="w-4 h-4 text-orange-600" />
-                </button>
               </div>
             </div>
           </header>
