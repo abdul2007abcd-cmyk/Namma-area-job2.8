@@ -74,6 +74,38 @@ export default function App() {
     const res = await fetchSupabaseJobs();
     setSupabaseStatus(res.status);
     if (res.status.connected && res.status.tableExists) {
+      // Find local custom jobs to sync online if they aren't on Supabase yet
+      const saved = localStorage.getItem('namma-area-job-posts');
+      let localJobs: Job[] = [];
+      if (saved) {
+        try {
+          localJobs = JSON.parse(saved);
+        } catch (e) {}
+      }
+
+      const customLocalJobs = localJobs.filter(j => j.isCustom && !j.id.startsWith('seed-'));
+      const fetchedIds = new Set(res.jobs.map(j => j.id));
+      const unsyncedJobs = customLocalJobs.filter(j => !fetchedIds.has(j.id));
+
+      if (unsyncedJobs.length > 0) {
+        console.log(`Auto-syncing ${unsyncedJobs.length} local posts to Supabase...`);
+        for (const job of unsyncedJobs) {
+          try {
+            await insertSupabaseJob(job);
+          } catch (e) {
+            console.warn('Failed to auto-sync job:', job.id, e);
+          }
+        }
+        // Fetch again to get the complete merged list from Supabase
+        const refreshed = await fetchSupabaseJobs();
+        if (refreshed.status.connected && refreshed.status.tableExists) {
+          setJobs(refreshed.jobs);
+          localStorage.setItem('namma-area-job-posts', JSON.stringify(refreshed.jobs));
+          setIsLoadingJobs(false);
+          return;
+        }
+      }
+
       setJobs(res.jobs);
       localStorage.setItem('namma-area-job-posts', JSON.stringify(res.jobs));
     } else {
@@ -124,38 +156,35 @@ export default function App() {
       isCustom: true
     };
 
-    // Optimistic UI Update (Update local state immediately)
+    // Optimistic UI Update (Update local state immediately so user sees the new post)
     setJobs((prev) => [newJob, ...prev]);
     setActiveTab('browse'); // Jump back to noticeboard
     setSearchQuery(''); // Reset search
     setSelectedCategory('all'); // Reset filters
 
-    // Asynchronously insert into Supabase
-    if (supabaseStatus?.connected && supabaseStatus?.tableExists) {
+    // Ensure we update backup cache immediately
+    const saved = localStorage.getItem('namma-area-job-posts');
+    let currentLocalJobs = SEED_JOBS;
+    if (saved) {
       try {
-        await insertSupabaseJob(newJob);
-        // Refresh local listings to match DB fully
-        const res = await fetchSupabaseJobs();
-        if (res.status.connected && res.status.tableExists) {
-          setJobs(res.jobs);
-        }
-      } catch (err: any) {
-        console.error('Supabase write error, keeping in local state:', err);
-        alert(currentLanguage === 'en'
-          ? `⚠️ Succeeded locally but failed to sync online with Supabase: ${err.message}`
-          : `⚠️ விளம்பரம் பதிவிடப்பட்டது, ஆனால் Supabase ஆன்லைன் தரவுத்தளத்தில் சேமிக்க முடியவில்லை: ${err.message}`
-        );
+        currentLocalJobs = JSON.parse(saved);
+      } catch (e) {}
+    }
+    localStorage.setItem('namma-area-job-posts', JSON.stringify([newJob, ...currentLocalJobs]));
+
+    // Attempt to insert into Supabase
+    try {
+      await insertSupabaseJob(newJob);
+      // Refresh local listings to match DB fully
+      const res = await fetchSupabaseJobs();
+      if (res.status.connected && res.status.tableExists) {
+        setJobs(res.jobs);
+        setSupabaseStatus(res.status);
       }
-    } else {
-      // Ensure we update backup cache
-      const saved = localStorage.getItem('namma-area-job-posts');
-      let currentLocalJobs = SEED_JOBS;
-      if (saved) {
-        try {
-          currentLocalJobs = JSON.parse(saved);
-        } catch (e) {}
-      }
-      localStorage.setItem('namma-area-job-posts', JSON.stringify([newJob, ...currentLocalJobs]));
+    } catch (err: any) {
+      console.warn('Supabase write deferred/queued offline:', err);
+      // We do not alert the user since the post is successfully added in local state & storage,
+      // and will be synced back to the database automatically when online.
     }
   };
 
