@@ -29,7 +29,7 @@ import AreaSelectorModal from './components/AreaSelectorModal';
 import JobCard from './components/JobCard';
 import JobForm from './components/JobForm';
 import { motion, AnimatePresence } from 'motion/react';
-import { supabase, fetchSupabaseJobs, insertSupabaseJob, type SupabaseSyncStatus } from './supabase';
+import { fetchSupabaseJobs, insertSupabaseJob, resetSupabaseJobs, type SupabaseSyncStatus } from './supabase';
 
 
 export default function App() {
@@ -168,7 +168,7 @@ export default function App() {
         setIsLoadingJobs(true);
         // Clear Supabase or re-seed it
         try {
-          await supabase.from('jobs').delete().neq('id', 'keep_all');
+          await resetSupabaseJobs();
         } catch (e) {
           console.warn('Could not reset Supabase, resetting local list:', e);
         }
@@ -639,7 +639,7 @@ export default function App() {
                           CONNECTION URL
                         </span>
                         <span className="block text-xs font-mono font-bold text-slate-700 truncate max-w-[200px] sm:max-w-xs mt-0.5">
-                          {(import.meta as any).env.VITE_SUPABASE_URL || 'https://ltxpifavwbejpbedpgro.supabase.co'}
+                          {(import.meta as any).env.VITE_SUPABASE_URL || 'https://uedogqtaxjlgoyhjndjz.supabase.co'}
                         </span>
                       </div>
                       <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest shrink-0 ${
