@@ -1,0 +1,6 @@
+{
+  "name": "Namma Area Job",
+  "description": "A hyperlocal, informal job board connecting small local businesses and job seekers in Chennai neighborhoods.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
