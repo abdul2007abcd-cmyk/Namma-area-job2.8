@@ -16,7 +16,11 @@ import {
   Sparkles,
   ChevronRight,
   Map,
-  X
+  X,
+  Database,
+  Copy,
+  Check,
+  RefreshCw
 } from 'lucide-react';
 import { Job, Language } from './types';
 import { translations, CATEGORIES, AREA_MAPPINGS } from './translations';
@@ -25,6 +29,8 @@ import AreaSelectorModal from './components/AreaSelectorModal';
 import JobCard from './components/JobCard';
 import JobForm from './components/JobForm';
 import { motion, AnimatePresence } from 'motion/react';
+import { supabase, fetchSupabaseJobs, insertSupabaseJob, type SupabaseSyncStatus } from './supabase';
+
 
 export default function App() {
   // --- STATE ---
@@ -51,14 +57,51 @@ export default function App() {
         // Fallback to seeds if parsing fails
       }
     }
-    // Set initial seed jobs in local storage if not already there
-    localStorage.setItem('namma-area-job-posts', JSON.stringify(SEED_JOBS));
     return SEED_JOBS;
   });
 
+  // Supabase Integration States
+  const [supabaseStatus, setSupabaseStatus] = useState<SupabaseSyncStatus | null>(null);
+  const [isLoadingJobs, setIsLoadingJobs] = useState(true);
+  const [showSupabaseModal, setShowSupabaseModal] = useState(false);
+  const [copied, setCopied] = useState(false);
+
   // --- ACTIONS & EFFECT SYNC ---
+
+  // Fetch from Supabase
+  const handleSyncSupabase = async () => {
+    setIsLoadingJobs(true);
+    const res = await fetchSupabaseJobs();
+    setSupabaseStatus(res.status);
+    if (res.status.connected && res.status.tableExists) {
+      setJobs(res.jobs);
+      localStorage.setItem('namma-area-job-posts', JSON.stringify(res.jobs));
+    } else {
+      // Offline / Setup Needed Fallback to LocalStorage
+      const saved = localStorage.getItem('namma-area-job-posts');
+      if (saved) {
+        try {
+          setJobs(JSON.parse(saved));
+        } catch (e) {
+          setJobs(SEED_JOBS);
+        }
+      } else {
+        setJobs(SEED_JOBS);
+        localStorage.setItem('namma-area-job-posts', JSON.stringify(SEED_JOBS));
+      }
+    }
+    setIsLoadingJobs(false);
+  };
+
   useEffect(() => {
-    localStorage.setItem('namma-area-job-posts', JSON.stringify(jobs));
+    handleSyncSupabase();
+  }, []);
+
+  // Sync to local storage as safety backup
+  useEffect(() => {
+    if (jobs.length > 0) {
+      localStorage.setItem('namma-area-job-posts', JSON.stringify(jobs));
+    }
   }, [jobs]);
 
   const handleSelectArea = (area: string) => {
@@ -73,28 +116,71 @@ export default function App() {
     localStorage.setItem('namma-area-job-lang', nextLang);
   };
 
-  const handleAddJob = (newJobData: Omit<Job, 'id' | 'postedAt' | 'isCustom'>) => {
+  const handleAddJob = async (newJobData: Omit<Job, 'id' | 'postedAt' | 'isCustom'>) => {
     const newJob: Job = {
       ...newJobData,
-      id: `custom-${Date.now()}`,
+      id: `job-${Date.now()}`,
       postedAt: new Date().toISOString(),
       isCustom: true
     };
+
+    // Optimistic UI Update (Update local state immediately)
     setJobs((prev) => [newJob, ...prev]);
     setActiveTab('browse'); // Jump back to noticeboard
     setSearchQuery(''); // Reset search
     setSelectedCategory('all'); // Reset filters
-  };
 
-  const handleResetApp = () => {
-    if (confirm(currentLanguage === 'en' ? 'Reset noticeboard back to default jobs?' : 'அறிவிப்புப் பலகையை பழைய நிலைக்கு மீட்டமைக்கவா?')) {
-      setJobs(SEED_JOBS);
-      setSelectedArea('');
-      localStorage.removeItem('namma-area-job-area');
-      localStorage.setItem('namma-area-job-posts', JSON.stringify(SEED_JOBS));
-      setActiveTab('browse');
+    // Asynchronously insert into Supabase
+    if (supabaseStatus?.connected && supabaseStatus?.tableExists) {
+      try {
+        await insertSupabaseJob(newJob);
+        // Refresh local listings to match DB fully
+        const res = await fetchSupabaseJobs();
+        if (res.status.connected && res.status.tableExists) {
+          setJobs(res.jobs);
+        }
+      } catch (err: any) {
+        console.error('Supabase write error, keeping in local state:', err);
+        alert(currentLanguage === 'en'
+          ? `⚠️ Succeeded locally but failed to sync online with Supabase: ${err.message}`
+          : `⚠️ விளம்பரம் பதிவிடப்பட்டது, ஆனால் Supabase ஆன்லைன் தரவுத்தளத்தில் சேமிக்க முடியவில்லை: ${err.message}`
+        );
+      }
+    } else {
+      // Ensure we update backup cache
+      const saved = localStorage.getItem('namma-area-job-posts');
+      let currentLocalJobs = SEED_JOBS;
+      if (saved) {
+        try {
+          currentLocalJobs = JSON.parse(saved);
+        } catch (e) {}
+      }
+      localStorage.setItem('namma-area-job-posts', JSON.stringify([newJob, ...currentLocalJobs]));
     }
   };
+
+  const handleResetApp = async () => {
+    if (confirm(currentLanguage === 'en' ? 'Reset noticeboard back to default jobs?' : 'அறிவிப்புப் பலகையை பழைய நிலைக்கு மீட்டமைக்கவா?')) {
+      setSelectedArea('');
+      localStorage.removeItem('namma-area-job-area');
+      
+      if (supabaseStatus?.connected && supabaseStatus?.tableExists) {
+        setIsLoadingJobs(true);
+        // Clear Supabase or re-seed it
+        try {
+          await supabase.from('jobs').delete().neq('id', 'keep_all');
+        } catch (e) {
+          console.warn('Could not reset Supabase, resetting local list:', e);
+        }
+      }
+      
+      setJobs(SEED_JOBS);
+      localStorage.setItem('namma-area-job-posts', JSON.stringify(SEED_JOBS));
+      setActiveTab('browse');
+      await handleSyncSupabase();
+    }
+  };
+
 
   // --- DERIVED TRANS-DATA ---
   const t = translations[currentLanguage];
@@ -201,6 +287,28 @@ export default function App() {
                       ? selectedArea
                       : AREA_MAPPINGS[selectedArea] || selectedArea}
                   </span>
+                </button>
+
+                {/* Supabase Connection Status Pill */}
+                <button
+                  onClick={() => setShowSupabaseModal(true)}
+                  id="supabase-status-pill"
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border-2 text-xs font-black cursor-pointer transition-all ${
+                    isLoadingJobs
+                      ? 'bg-slate-100 border-slate-200 text-slate-500 animate-pulse'
+                      : supabaseStatus?.connected && supabaseStatus?.tableExists
+                      ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100/70'
+                      : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100/70'
+                  }`}
+                  title="Supabase Sync Status"
+                >
+                  <Database className={`w-3.5 h-3.5 ${isLoadingJobs ? 'animate-spin' : ''}`} />
+                  <span className="hidden md:inline">
+                    {isLoadingJobs ? 'Syncing...' : supabaseStatus?.connected && supabaseStatus?.tableExists ? 'Supabase Live' : 'Supabase Setup'}
+                  </span>
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    isLoadingJobs ? 'bg-slate-400' : supabaseStatus?.connected && supabaseStatus?.tableExists ? 'bg-green-500' : 'bg-amber-500'
+                  }`} />
                 </button>
 
                 {/* Language toggle */}
@@ -481,6 +589,209 @@ export default function App() {
                 onClose={() => setShowAreaModal(false)}
                 isOnboarding={false}
               />
+            )}
+          </AnimatePresence>
+
+          {/* Supabase Status Modal */}
+          <AnimatePresence>
+            {showSupabaseModal && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                {/* Backdrop */}
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => setShowSupabaseModal(false)}
+                  className="absolute inset-0 bg-slate-900/60 backdrop-blur-xs"
+                />
+
+                {/* Content Card */}
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                  className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl border-2 border-orange-150 overflow-hidden z-10"
+                >
+                  {/* Header */}
+                  <div className="p-6 bg-slate-900 text-white flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      <div className="bg-orange-600 text-white px-2 py-1 rounded-lg font-black text-xs tracking-wider uppercase">
+                        SUPABASE
+                      </div>
+                      <span className="font-sans font-black text-white text-lg tracking-tight">
+                        Database Sync Status
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setShowSupabaseModal(false)}
+                      className="p-1 rounded-full hover:bg-slate-800 text-slate-400 hover:text-white transition-all cursor-pointer"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  {/* Body */}
+                  <div className="p-6 space-y-5">
+                    {/* Connection Stats banner */}
+                    <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                      <div className="min-w-0">
+                        <span className="block text-xs font-bold text-slate-400 uppercase tracking-wider font-mono">
+                          CONNECTION URL
+                        </span>
+                        <span className="block text-xs font-mono font-bold text-slate-700 truncate max-w-[200px] sm:max-w-xs mt-0.5">
+                          {(import.meta as any).env.VITE_SUPABASE_URL || 'https://ltxpifavwbejpbedpgro.supabase.co'}
+                        </span>
+                      </div>
+                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest shrink-0 ${
+                        supabaseStatus?.connected
+                          ? 'bg-green-50 text-green-700 border border-green-200'
+                          : 'bg-rose-50 text-rose-700 border border-rose-200'
+                      }`}>
+                        {supabaseStatus?.connected ? 'CONNECTED' : 'OFFLINE'}
+                      </span>
+                    </div>
+
+                    {/* Table Status Details */}
+                    <div>
+                      {isLoadingJobs ? (
+                        <div className="text-center py-6 space-y-2">
+                          <RefreshCw className="w-8 h-8 text-orange-500 animate-spin mx-auto" />
+                          <p className="text-xs font-bold text-slate-500">Checking connection and database structure...</p>
+                        </div>
+                      ) : supabaseStatus?.connected && supabaseStatus?.tableExists ? (
+                        <div className="p-4 bg-green-50 border border-green-200 rounded-2xl flex gap-3">
+                          <span className="text-xl">🟢</span>
+                          <div className="space-y-1">
+                            <h4 className="text-sm font-black text-green-800 uppercase tracking-wide leading-none">
+                              Live & Synchronized
+                            </h4>
+                            <p className="text-xs text-green-700 font-bold leading-relaxed">
+                              All jobs are successfully loaded and updated directly from the <strong>jobs</strong> table in your Supabase database.
+                            </p>
+                          </div>
+                        </div>
+                      ) : supabaseStatus?.connected && !supabaseStatus?.tableExists ? (
+                        <div className="space-y-4">
+                          <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex gap-3">
+                            <span className="text-xl">⚠️</span>
+                            <div className="space-y-1">
+                              <h4 className="text-sm font-black text-amber-800 uppercase tracking-wide leading-none">
+                                SQL Table Setup Required
+                              </h4>
+                              <p className="text-xs text-amber-700 font-bold leading-relaxed">
+                                Connected to Supabase, but the <strong className="font-extrabold">"jobs"</strong> table does not exist yet. Paste this script into your Supabase SQL Editor:
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* SQL Editor script box */}
+                          <div className="relative bg-slate-900 rounded-2xl overflow-hidden shadow-inner">
+                            <div className="flex justify-between items-center px-4 py-2 bg-slate-800 text-slate-400 text-[10px] font-bold font-mono">
+                              <span>PostgreSQL Query</span>
+                              <button
+                                onClick={() => {
+                                  const sqlText = `create table jobs (
+  id text primary key,
+  business_name text not null,
+  role text not null,
+  category text not null,
+  salary text not null,
+  location text,
+  area text not null,
+  contact_number text not null,
+  description text not null,
+  posted_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table jobs enable row level security;
+
+create policy "Allow anyone to read jobs" on jobs for select using (true);
+create policy "Allow anyone to insert jobs" on jobs for insert with check (true);`;
+                                  navigator.clipboard.writeText(sqlText);
+                                  setCopied(true);
+                                  setTimeout(() => setCopied(false), 2000);
+                                }}
+                                className="flex items-center gap-1 text-slate-300 hover:text-white cursor-pointer"
+                              >
+                                {copied ? (
+                                  <>
+                                    <Check className="w-3 h-3 text-green-400" />
+                                    <span className="text-green-400 font-black">COPIED!</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="w-3 h-3" />
+                                    <span>Copy Script</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                            <pre className="p-4 text-[11px] font-mono text-slate-300 overflow-x-auto leading-normal text-left max-h-40">
+{`create table jobs (
+  id text primary key,
+  business_name text not null,
+  role text not null,
+  category text not null,
+  salary text not null,
+  location text,
+  area text not null,
+  contact_number text not null,
+  description text not null,
+  posted_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table jobs enable row level security;
+
+create policy "Allow anyone to read jobs" on jobs for select using (true);
+create policy "Allow anyone to insert jobs" on jobs for insert with check (true);`}
+                            </pre>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex gap-3">
+                          <span className="text-xl">❌</span>
+                          <div className="space-y-1">
+                            <h4 className="text-sm font-black text-rose-800 uppercase tracking-wide leading-none">
+                              Supabase Offline
+                            </h4>
+                            <p className="text-xs text-rose-700 font-bold leading-relaxed">
+                              Could not establish connection to Supabase. Check configuration credentials.
+                            </p>
+                            {supabaseStatus?.error && (
+                              <p className="text-[10px] text-rose-500 font-mono mt-1 break-all bg-white/50 p-2 rounded-lg border border-rose-100">
+                                Error: {supabaseStatus.error}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Developer note */}
+                    <div className="text-[11px] text-slate-400 leading-relaxed bg-slate-50 p-3.5 rounded-xl border border-slate-100">
+                      💡 <strong>Automatic Seeding:</strong> Once you create the <strong>jobs</strong> table, the app will automatically seed it with the default Chennai job listings!
+                    </div>
+
+                    {/* Footer Actions */}
+                    <div className="flex gap-2.5 pt-2">
+                      <button
+                        onClick={handleSyncSupabase}
+                        disabled={isLoadingJobs}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-3 bg-orange-600 hover:bg-orange-700 disabled:bg-orange-400 text-white rounded-xl font-bold text-sm cursor-pointer transition-all active:scale-98 shadow-xs"
+                      >
+                        <RefreshCw className={`w-4 h-4 ${isLoadingJobs ? 'animate-spin' : ''}`} />
+                        Check & Sync Database
+                      </button>
+                      <button
+                        onClick={() => setShowSupabaseModal(false)}
+                        className="px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-sm cursor-pointer transition-all"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              </div>
             )}
           </AnimatePresence>
         </>
