@@ -46,19 +46,23 @@ export default function App() {
     return (savedLang === 'en' || savedLang === 'ta') ? savedLang : 'en';
   });
 
-  const [userRole, setUserRole] = useState<'seeker' | 'provider'>(() => {
+  const [userRole, setUserRole] = useState<'seeker' | 'provider' | null>(() => {
     try {
       const params = new URLSearchParams(window.location.search);
       const urlRole = params.get('role');
       if (urlRole === 'provider' || urlRole === 'owner') {
         return 'provider';
       }
+      if (urlRole === 'seeker') {
+        return 'seeker';
+      }
     } catch (e) {
       console.warn('URL parsing failed:', e);
     }
     const savedRole = localStorage.getItem('namma-area-user-role');
     if (savedRole === 'provider') return 'provider';
-    return 'seeker';
+    if (savedRole === 'seeker') return 'seeker';
+    return null;
   });
 
   const [activeTab, setActiveTab] = useState<'browse' | 'post'>('browse');
@@ -126,7 +130,12 @@ export default function App() {
   const handleSelectRole = (role: 'seeker' | 'provider') => {
     setUserRole(role);
     localStorage.setItem('namma-area-user-role', role);
-    setActiveTab(role === 'seeker' ? 'browse' : 'post');
+    if (role === 'seeker') {
+      setActiveTab('browse');
+    } else {
+      setActiveTab('post');
+      setProviderSubTab('post');
+    }
   };
 
   const handleSelectArea = (area: string) => {
@@ -284,6 +293,155 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50/50 flex flex-col justify-between" id="namma-area-app-root">
+          {/* ========================================== */}
+          {/* 0. LANDING ROLE SELECTION SCREEN          */}
+          {/* ========================================== */}
+          {userRole === null && (
+            <motion.div
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, ease: 'easeOut' }}
+              className="flex-grow flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 max-w-4xl mx-auto w-full"
+            >
+              {/* Header inside landing */}
+              <div className="flex flex-col items-center text-center space-y-6">
+                {/* Language Switch */}
+                <div className="w-full flex justify-end">
+                  <button
+                    onClick={handleLanguageToggle}
+                    id="landing-lang-toggle"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-800 rounded-xl border border-slate-200 text-xs font-bold transition-all cursor-pointer shadow-xs"
+                  >
+                    <Globe className="w-4 h-4 text-blue-600" />
+                    <span>{currentLanguage === 'en' ? 'தமிழ்' : 'English'}</span>
+                  </button>
+                </div>
+
+                {/* Big Logo */}
+                <div className="w-20 h-20 bg-blue-600 rounded-3xl flex items-center justify-center text-white font-black shadow-md relative overflow-hidden">
+                  <span className="text-4xl font-black select-none">ந</span>
+                  {/* Subtle accent light */}
+                  <div className="absolute top-0 right-0 w-8 h-8 bg-white/20 rounded-full blur-xs pointer-events-none" />
+                </div>
+
+                <div className="space-y-2">
+                  <h1 className="font-sans font-black text-3xl sm:text-4xl text-slate-800 tracking-tight leading-none">
+                    {currentLanguage === 'en' ? 'Namma Area Job' : 'நம்ம ஏரியா ஜாப்'}
+                  </h1>
+                  <p className="text-sm text-slate-500 font-sans font-medium tracking-wide max-w-md mx-auto">
+                    {currentLanguage === 'en' 
+                      ? 'Local shop & office jobs in your Chennai neighborhood. Direct connection, zero agents, 100% free!'
+                      : 'உங்க சென்னை ஏரியாவில் உள்ள உள்ளூர் வேலைகள். இடைத்தரகர்கள் இல்லாமல் நேரடியாகத் தொடர்பு கொள்ளலாம்!'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Roles Cards Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-12">
+                {/* Card 1: Job Seeker */}
+                <div 
+                  className="bg-white rounded-3xl p-6 sm:p-8 border-2 border-slate-150 hover:border-blue-500 transition-all duration-300 shadow-xs hover:shadow-sm flex flex-col justify-between space-y-6 group relative overflow-hidden"
+                >
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-blue-50 rounded-full blur-3xl group-hover:bg-blue-100/50 transition-all pointer-events-none" />
+                  
+                  <div className="space-y-4 relative z-10">
+                    <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center font-black text-xl shadow-xs group-hover:scale-110 transition-transform">
+                      <Briefcase className="w-6 h-6" />
+                    </div>
+                    
+                    <div className="space-y-1">
+                      <h2 className="text-xl font-black text-slate-800 font-sans tracking-tight">
+                        {currentLanguage === 'en' ? 'Job Seeker' : 'வேலை தேடுபவர்'}
+                      </h2>
+                      <p className="text-xs text-slate-500 font-sans font-medium leading-relaxed">
+                        {currentLanguage === 'en' 
+                          ? 'Are you looking for work in Chennai shops, hotels, offices, or supermarkets close to your home?'
+                          : 'உங்கள் வீட்டின் அருகே உள்ள கடைகள், ஹோட்டல்கள் அல்லது அலுவலகங்களில் வேலை தேடுகிறீர்களா?'}
+                      </p>
+                    </div>
+
+                    <ul className="space-y-2 text-xs font-bold text-slate-600 pt-2">
+                      <li className="flex items-center gap-2">
+                        <span className="text-blue-500 text-sm">✓</span>
+                        <span>{currentLanguage === 'en' ? '100% Free - No fees' : '100% இலவசம் - கட்டணங்கள் இல்லை'}</span>
+                      </li>
+                      <li className="flex items-center gap-2">
+                        <span className="text-blue-500 text-sm">✓</span>
+                        <span>{currentLanguage === 'en' ? 'Direct Mobile & WhatsApp' : 'நேரடி கைப்பேசி & வாட்ஸ்அப்'}</span>
+                      </li>
+                      <li className="flex items-center gap-2">
+                        <span className="text-blue-500 text-sm">✓</span>
+                        <span>{currentLanguage === 'en' ? 'Filter by your specific area' : 'உங்கள் பகுதியைத் தேர்ந்தெடுத்துத் தேடலாம்'}</span>
+                      </li>
+                    </ul>
+                  </div>
+
+                  <button
+                    onClick={() => handleSelectRole('seeker')}
+                    id="landing-select-seeker-btn"
+                    className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-sans font-black text-xs uppercase tracking-wider rounded-2xl cursor-pointer active:scale-95 transition-all shadow-md flex items-center justify-center gap-2 group-hover:shadow-lg relative z-10"
+                  >
+                    <span>{currentLanguage === 'en' ? 'Find Jobs Directly' : 'நேரடியாக வேலைகளைத் தேடு'}</span>
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Card 2: Business / Shop Owner */}
+                <div 
+                  className="bg-white rounded-3xl p-6 sm:p-8 border-2 border-slate-150 hover:border-emerald-500 transition-all duration-300 shadow-xs hover:shadow-sm flex flex-col justify-between space-y-6 group relative overflow-hidden"
+                >
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-50 rounded-full blur-3xl group-hover:bg-emerald-100/50 transition-all pointer-events-none" />
+                  
+                  <div className="space-y-4 relative z-10">
+                    <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center font-black text-xl shadow-xs group-hover:scale-110 transition-transform">
+                      <Building2 className="w-6 h-6" />
+                    </div>
+                    
+                    <div className="space-y-1">
+                      <h2 className="text-xl font-black text-slate-800 font-sans tracking-tight">
+                        {currentLanguage === 'en' ? 'Business / Shop Owner' : 'கடை / நிறுவன உரிமையாளர்'}
+                      </h2>
+                      <p className="text-xs text-slate-500 font-sans font-medium leading-relaxed">
+                        {currentLanguage === 'en' 
+                          ? 'Need helper staff, delivery boys, sales girls, or kitchen helpers for your local Chennai business?'
+                          : 'உங்கள் கடை, அலுவலகம் அல்லது நிறுவனத்திற்கு ஆட்கள் (உதவியாளர்கள், டெலிவரி பாய்ஸ், விற்பனையாளர்கள்) தேவையா?'}
+                      </p>
+                    </div>
+
+                    <ul className="space-y-2 text-xs font-bold text-slate-600 pt-2">
+                      <li className="flex items-center gap-2">
+                        <span className="text-emerald-500 text-sm">✓</span>
+                        <span>{currentLanguage === 'en' ? 'Post vacancy in 1 minute' : '1 நிமிடத்தில் விளம்பரத்தைப் போஸ்ட் செய்யலாம்'}</span>
+                      </li>
+                      <li className="flex items-center gap-2">
+                        <span className="text-emerald-500 text-sm">✓</span>
+                        <span>{currentLanguage === 'en' ? 'No account / No login required' : 'லாகின் அல்லது கணக்கு எதுவும் தேவையில்லை'}</span>
+                      </li>
+                      <li className="flex items-center gap-2">
+                        <span className="text-emerald-500 text-sm">✓</span>
+                        <span>{currentLanguage === 'en' ? 'Get direct phone calls' : 'விண்ணப்பதாரர்களின் நேரடி அழைப்புகள்'}</span>
+                      </li>
+                    </ul>
+                  </div>
+
+                  <button
+                    onClick={() => handleSelectRole('provider')}
+                    id="landing-select-provider-btn"
+                    className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-sans font-black text-xs uppercase tracking-wider rounded-2xl cursor-pointer active:scale-95 transition-all shadow-md flex items-center justify-center gap-2 group-hover:shadow-lg relative z-10"
+                  >
+                    <span>{currentLanguage === 'en' ? 'Post a Job Vacancy' : 'வேலைவாய்ப்பை உடனே போஸ்ட் செய்'}</span>
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Sub-note */}
+              <p className="text-[10px] text-slate-400 text-center font-bold font-sans mt-8 uppercase tracking-wide">
+                📍 {currentLanguage === 'en' ? 'A Local Community Platform for Chennai Neighborhoods' : 'சென்னை மக்களுக்கான பிரத்யேக உள்ளூர் தளம்'}
+              </p>
+            </motion.div>
+          )}
+
           {/* ========================================== */}
           {/* 1. JOB SEEKER PORTAL                       */}
           {/* ========================================== */}
@@ -800,7 +958,7 @@ export default function App() {
           <footer className="bg-slate-900 text-slate-400 py-10 px-4 mt-12 border-t-2 border-slate-800 text-center space-y-4">
             <div className="max-w-4xl mx-auto space-y-4">
               <div className="flex items-center justify-center gap-2">
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-black text-sm text-white ${userRole === 'seeker' ? 'bg-blue-600' : 'bg-emerald-600'}`}>
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-black text-sm text-white ${userRole === 'seeker' ? 'bg-blue-600' : userRole === 'provider' ? 'bg-emerald-600' : 'bg-slate-700'}`}>
                   ந
                 </div>
                 <span className="font-sans font-black text-white text-sm tracking-tight">
@@ -813,6 +971,21 @@ export default function App() {
               </p>
 
               <div className="flex justify-center gap-6 text-[11px] font-bold text-slate-500">
+                {userRole !== null && (
+                  <>
+                    <button
+                      onClick={() => {
+                        setUserRole(null);
+                        localStorage.removeItem('namma-area-user-role');
+                      }}
+                      id="footer-change-role-btn"
+                      className="hover:text-blue-500 transition-colors cursor-pointer"
+                    >
+                      👥 {currentLanguage === 'en' ? 'Change Role' : 'பயனர் மாற்றம்'}
+                    </button>
+                    <span>•</span>
+                  </>
+                )}
                 <button
                   onClick={() => handleSelectArea('')}
                   id="footer-relaunch-onboarding"
