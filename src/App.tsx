@@ -10,6 +10,7 @@ import {
   Globe,
   PlusCircle,
   Briefcase,
+  Building2,
   AlertCircle,
   HelpCircle,
   RotateCcw,
@@ -26,10 +27,12 @@ import { Job, Language } from './types';
 import { translations, CATEGORIES, AREA_MAPPINGS } from './translations';
 import { SEED_JOBS } from './data/seedJobs';
 import AreaSelectorModal from './components/AreaSelectorModal';
+import RoleSelectorModal from './components/RoleSelectorModal';
 import JobCard from './components/JobCard';
 import JobForm from './components/JobForm';
 import { motion, AnimatePresence } from 'motion/react';
-import { fetchSupabaseJobs, insertSupabaseJob, resetSupabaseJobs, type SupabaseSyncStatus } from './supabase';
+// Local storage based job notices board
+
 
 
 export default function App() {
@@ -43,6 +46,10 @@ export default function App() {
     return (savedLang === 'en' || savedLang === 'ta') ? savedLang : 'en';
   });
 
+  const [userRole, setUserRole] = useState<'seeker' | 'provider' | null>(() => {
+    return (localStorage.getItem('namma-area-user-role') as 'seeker' | 'provider' | null) || null;
+  });
+
   const [activeTab, setActiveTab] = useState<'browse' | 'post'>('browse');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -50,130 +57,36 @@ export default function App() {
 
   const [jobs, setJobs] = useState<Job[]>(() => {
     const saved = localStorage.getItem('namma-area-job-posts');
+    let loadedJobs = SEED_JOBS;
     if (saved) {
       try {
-        return JSON.parse(saved);
+        loadedJobs = JSON.parse(saved);
       } catch (e) {
         // Fallback to seeds if parsing fails
       }
     }
-    return SEED_JOBS;
+    // Automatically delete custom job postings older than 7 days
+    const sevenDaysInMs = 7 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    return loadedJobs.filter((job) => {
+      if (job.isCustom) {
+        const postedTime = new Date(job.postedAt).getTime();
+        return (now - postedTime) <= sevenDaysInMs;
+      }
+      return true;
+    });
   });
 
-  // Supabase Integration States
-  const [supabaseStatus, setSupabaseStatus] = useState<SupabaseSyncStatus | null>(null);
-  const [isLoadingJobs, setIsLoadingJobs] = useState(true);
-  const [showSupabaseModal, setShowSupabaseModal] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
-  const [timeTicker, setTimeTicker] = useState(0);
-
-  // --- ACTIONS & EFFECT SYNC ---
-
-  // Timer ticker to automatically refresh time-ago string every second
+  // Sync to local storage when jobs change
   useEffect(() => {
-    const timer = setInterval(() => {
-      setTimeTicker((prev) => prev + 1);
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // Fetch from Supabase
-  const handleSyncSupabase = async () => {
-    setIsLoadingJobs(true);
-    const res = await fetchSupabaseJobs();
-    setSupabaseStatus(res.status);
-    setLastSyncedAt(new Date());
-    if (res.status.connected && res.status.tableExists) {
-      // Find local custom jobs to sync online if they aren't on Supabase yet
-      const saved = localStorage.getItem('namma-area-job-posts');
-      let localJobs: Job[] = [];
-      if (saved) {
-        try {
-          localJobs = JSON.parse(saved);
-        } catch (e) {}
-      }
-
-      const customLocalJobs = localJobs.filter(j => j.isCustom && !j.id.startsWith('seed-'));
-      const fetchedIds = new Set(res.jobs.map(j => j.id));
-      const unsyncedJobs = customLocalJobs.filter(j => !fetchedIds.has(j.id));
-
-      if (unsyncedJobs.length > 0) {
-        console.log(`Auto-syncing ${unsyncedJobs.length} local posts to Supabase...`);
-        for (const job of unsyncedJobs) {
-          try {
-            await insertSupabaseJob(job);
-          } catch (e) {
-            console.warn('Failed to auto-sync job:', job.id, e);
-          }
-        }
-        // Fetch again to get the complete merged list from Supabase
-        const refreshed = await fetchSupabaseJobs();
-        if (refreshed.status.connected && refreshed.status.tableExists) {
-          setJobs(refreshed.jobs);
-          localStorage.setItem('namma-area-job-posts', JSON.stringify(refreshed.jobs));
-          setIsLoadingJobs(false);
-          return;
-        }
-      }
-
-      setJobs(res.jobs);
-      localStorage.setItem('namma-area-job-posts', JSON.stringify(res.jobs));
-    } else {
-      // Offline / Setup Needed Fallback to LocalStorage
-      const saved = localStorage.getItem('namma-area-job-posts');
-      if (saved) {
-        try {
-          setJobs(JSON.parse(saved));
-        } catch (e) {
-          setJobs(SEED_JOBS);
-        }
-      } else {
-        setJobs(SEED_JOBS);
-        localStorage.setItem('namma-area-job-posts', JSON.stringify(SEED_JOBS));
-      }
-    }
-    setIsLoadingJobs(false);
-  };
-
-  useEffect(() => {
-    handleSyncSupabase();
-  }, []);
-
-  // Periodic background polling to keep jobs and status updated automatically without blocking overlay
-  useEffect(() => {
-    const interval = setInterval(() => {
-      fetchSupabaseJobs().then((res) => {
-        setSupabaseStatus(res.status);
-        setLastSyncedAt(new Date());
-        if (res.status.connected && res.status.tableExists) {
-          setJobs(res.jobs);
-          localStorage.setItem('namma-area-job-posts', JSON.stringify(res.jobs));
-        }
-      }).catch((err) => {
-        console.warn('Background sync failed:', err);
-      });
-    }, 15000); // sync every 15 seconds
-
-    return () => clearInterval(interval);
-  }, []);
-
-  const getLastUpdatedText = () => {
-    if (!lastSyncedAt) return currentLanguage === 'en' ? 'Never' : 'இல்லை';
-    const diffMs = Date.now() - lastSyncedAt.getTime();
-    const diffSecs = Math.floor(diffMs / 1000);
-    if (diffSecs < 10) return currentLanguage === 'en' ? 'Just now' : 'சரியாக இப்போது';
-    if (diffSecs < 60) return currentLanguage === 'en' ? `${diffSecs}s ago` : `${diffSecs} விநாடிகளுக்கு முன்`;
-    const diffMins = Math.floor(diffSecs / 60);
-    return currentLanguage === 'en' ? `${diffMins}m ago` : `${diffMins} நிமிடங்களுக்கு முன்`;
-  };
-
-  // Sync to local storage as safety backup
-  useEffect(() => {
-    if (jobs.length > 0) {
-      localStorage.setItem('namma-area-job-posts', JSON.stringify(jobs));
-    }
+    localStorage.setItem('namma-area-job-posts', JSON.stringify(jobs));
   }, [jobs]);
+
+  const handleSelectRole = (role: 'seeker' | 'provider') => {
+    setUserRole(role);
+    localStorage.setItem('namma-area-user-role', role);
+    setActiveTab(role === 'seeker' ? 'browse' : 'post');
+  };
 
   const handleSelectArea = (area: string) => {
     setSelectedArea(area);
@@ -187,7 +100,21 @@ export default function App() {
     localStorage.setItem('namma-area-job-lang', nextLang);
   };
 
-  const handleAddJob = async (newJobData: Omit<Job, 'id' | 'postedAt' | 'isCustom'>) => {
+  const handleDeleteJob = (id: string) => {
+    if (confirm(currentLanguage === 'en' ? 'Are you sure you want to delete this job vacancy listing?' : 'இந்த வேலைவாய்ப்பு விளம்பரத்தை நிச்சயமாக நீக்க வேண்டுமா?')) {
+      setJobs((prev) => prev.filter((j) => j.id !== id));
+      const saved = localStorage.getItem('namma-area-job-posts');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved) as Job[];
+          const updated = parsed.filter((j) => j.id !== id);
+          localStorage.setItem('namma-area-job-posts', JSON.stringify(updated));
+        } catch (e) {}
+      }
+    }
+  };
+
+  const handleAddJob = (newJobData: Omit<Job, 'id' | 'postedAt' | 'isCustom'>) => {
     const newJob: Job = {
       ...newJobData,
       id: `job-${Date.now()}`,
@@ -195,9 +122,14 @@ export default function App() {
       isCustom: true
     };
 
-    // Optimistic UI Update (Update local state immediately so user sees the new post)
+    // Update local state immediately so user sees the new post
     setJobs((prev) => [newJob, ...prev]);
-    setActiveTab('browse'); // Jump back to noticeboard
+    
+    if (userRole === 'provider') {
+      setUserRole('seeker');
+      localStorage.setItem('namma-area-user-role', 'seeker');
+    }
+    setActiveTab('browse');
     setSearchQuery(''); // Reset search
     setSelectedCategory('all'); // Reset filters
 
@@ -210,42 +142,15 @@ export default function App() {
       } catch (e) {}
     }
     localStorage.setItem('namma-area-job-posts', JSON.stringify([newJob, ...currentLocalJobs]));
-
-    // Attempt to insert into Supabase
-    try {
-      await insertSupabaseJob(newJob);
-      // Refresh local listings to match DB fully
-      const res = await fetchSupabaseJobs();
-      if (res.status.connected && res.status.tableExists) {
-        setJobs(res.jobs);
-        setSupabaseStatus(res.status);
-      }
-    } catch (err: any) {
-      console.warn('Supabase write deferred/queued offline:', err);
-      // We do not alert the user since the post is successfully added in local state & storage,
-      // and will be synced back to the database automatically when online.
-    }
   };
 
-  const handleResetApp = async () => {
+  const handleResetApp = () => {
     if (confirm(currentLanguage === 'en' ? 'Reset noticeboard back to default jobs?' : 'அறிவிப்புப் பலகையை பழைய நிலைக்கு மீட்டமைக்கவா?')) {
       setSelectedArea('');
       localStorage.removeItem('namma-area-job-area');
-      
-      if (supabaseStatus?.connected && supabaseStatus?.tableExists) {
-        setIsLoadingJobs(true);
-        // Clear Supabase or re-seed it
-        try {
-          await resetSupabaseJobs();
-        } catch (e) {
-          console.warn('Could not reset Supabase, resetting local list:', e);
-        }
-      }
-      
       setJobs(SEED_JOBS);
       localStorage.setItem('namma-area-job-posts', JSON.stringify(SEED_JOBS));
       setActiveTab('browse');
-      await handleSyncSupabase();
     }
   };
 
@@ -305,343 +210,461 @@ export default function App() {
   }, [jobs, selectedArea]);
 
   // Determine if onboarding overlay is needed
-  const isOnboarding = selectedArea === '';
+  const isRoleOnboarding = userRole === null;
+  const isAreaOnboarding = !isRoleOnboarding && selectedArea === '';
+  const isOnboarding = isRoleOnboarding || isAreaOnboarding;
 
   return (
     <div className="min-h-screen bg-slate-50/50 flex flex-col justify-between" id="namma-area-app-root">
-      {/* 1. Onboarding Screen */}
+      {/* A. Role Selector Onboarding */}
+      <RoleSelectorModal
+        currentLanguage={currentLanguage}
+        onLanguageToggle={handleLanguageToggle}
+        onSelectRole={handleSelectRole}
+        isOpen={isRoleOnboarding}
+      />
+
+      {/* B. Area Selector Onboarding */}
       <AreaSelectorModal
         currentLanguage={currentLanguage}
         onLanguageToggle={handleLanguageToggle}
         onSelectArea={handleSelectArea}
-        isOpen={isOnboarding}
+        isOpen={isAreaOnboarding}
         isOnboarding={true}
       />
 
       {/* 2. Main Page content if onboarded */}
       {!isOnboarding && (
         <>
-          {/* Header */}
-          <header className="sticky top-0 z-40 bg-white border-b-2 border-slate-100 shadow-xs">
-            <div className="max-w-4xl mx-auto px-4 py-3.5 flex items-center justify-between gap-4">
-              {/* Brand Logo & Tagline */}
-              <div className="flex items-center gap-2.5 cursor-pointer" onClick={() => setActiveTab('browse')}>
-                <div className="w-10 h-10 bg-orange-600 rounded-xl flex items-center justify-center text-white font-black shadow-xs">
-                  <span className="text-xl font-black">ந</span>
+          {/* ========================================== */}
+          {/* 1. JOB SEEKER PORTAL                       */}
+          {/* ========================================== */}
+          {userRole === 'seeker' && (
+            <div className="flex-grow flex flex-col">
+              {/* Seeker Header */}
+              <header className="sticky top-0 z-40 bg-white border-b-2 border-slate-100 shadow-xs">
+                <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+                  {/* Brand Logo */}
+                  <div className="flex items-center gap-2.5 cursor-pointer" onClick={() => setSelectedCategory('all')}>
+                    <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white font-black shadow-xs">
+                      <span className="text-xl font-black">ந</span>
+                    </div>
+                    <div>
+                      <h1 className="font-sans font-black text-lg text-slate-800 tracking-tight leading-none">
+                        {t.brandName}
+                      </h1>
+                    </div>
+                  </div>
+
+                  {/* Top Controls */}
+                  <div className="flex items-center gap-2">
+                    {/* Area Select Button */}
+                    <button
+                      onClick={() => setShowAreaModal(true)}
+                      id="header-change-area-btn"
+                      className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-900 rounded-xl border-2 border-blue-200 text-xs font-black transition-all cursor-pointer shadow-xs max-w-[120px] sm:max-w-none truncate shrink-0"
+                    >
+                      <MapPin className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                      <span className="truncate">
+                        {selectedArea === 'All'
+                          ? t.allAreas
+                          : currentLanguage === 'en'
+                          ? selectedArea
+                          : AREA_MAPPINGS[selectedArea] || selectedArea}
+                      </span>
+                    </button>
+
+                    {/* Lang Toggle */}
+                    <button
+                      onClick={handleLanguageToggle}
+                      id="header-lang-toggle"
+                      className="flex items-center justify-center w-9 h-9 rounded-xl bg-slate-50 border-2 border-slate-200 hover:bg-slate-100 text-slate-700 transition-all cursor-pointer shadow-xs shrink-0"
+                      title={currentLanguage === 'en' ? 'Switch to Tamil' : 'ஆங்கிலத்திற்கு மாறவும்'}
+                    >
+                      <Globe className="w-4 h-4 text-blue-600" />
+                    </button>
+                  </div>
                 </div>
-                <div>
-                  <h1 className="font-sans font-black text-lg text-slate-800 tracking-tight leading-none">
-                    {t.brandName}
-                  </h1>
-                  <span className="text-[10px] text-slate-400 font-sans font-bold tracking-wide block mt-1">
-                    {currentLanguage === 'en' ? 'CHENNAI HYPERLOCAL NOTICEBOARD' : 'சென்னை உள்ளூர் வேலைகள்'}
+              </header>
+
+              {/* Seeker Community Notice bar */}
+              <section className="bg-blue-600 text-white py-2 px-4 text-center shadow-xs">
+                <div className="max-w-4xl mx-auto flex items-center justify-center gap-2">
+                  <span className="text-xs font-black tracking-wide leading-relaxed font-sans uppercase">
+                    📢 {t.communityNotice}
                   </span>
                 </div>
-              </div>
+              </section>
 
-              {/* Top Controls: Neighborhood select & Lang Toggle */}
-              <div className="flex items-center gap-2">
-                {/* Active Neighborhood Button */}
-                <button
-                  onClick={() => setShowAreaModal(true)}
-                  id="header-change-area-btn"
-                  className="flex items-center gap-1.5 px-3 py-2 bg-orange-50 hover:bg-orange-100/80 text-orange-900 rounded-xl border-2 border-orange-200 text-xs font-black transition-all cursor-pointer shadow-xs max-w-[150px] sm:max-w-none animate-pulse-subtle"
-                >
-                  <MapPin className="w-3.5 h-3.5 text-orange-600 shrink-0" />
-                  <span className="truncate">
-                    {selectedArea === 'All'
-                      ? t.allAreas
-                      : currentLanguage === 'en'
-                      ? selectedArea
-                      : AREA_MAPPINGS[selectedArea] || selectedArea}
-                  </span>
-                </button>
-              </div>
-            </div>
-          </header>
+              {/* Seeker Main Body */}
+              <main className="max-w-4xl mx-auto px-4 py-6 flex-grow w-full space-y-6">
+                {/* Prominent Mode Selector In Front */}
+                <div className="bg-white p-4 rounded-3xl border-2 border-slate-100 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="text-center sm:text-left space-y-0.5">
+                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block">
+                      {currentLanguage === 'en' ? 'Platform Mode' : 'தளத்தின் நிலை'}
+                    </span>
+                    <span className="text-sm font-black text-slate-700">
+                      {currentLanguage === 'en' ? '🔍 Looking for Job Vacancies' : '🔍 வேலைகளைத் தேடுகிறீர்கள்'}
+                    </span>
+                  </div>
+                  
+                  <div className="p-1 bg-slate-100 rounded-2xl flex w-full sm:w-auto border border-slate-200">
+                    <button
+                      onClick={() => handleSelectRole('seeker')}
+                      id="front-toggle-seeker"
+                      className="flex-1 sm:flex-none px-4 py-2.5 text-xs font-black font-sans uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 bg-blue-600 text-white shadow-xs"
+                    >
+                      <Briefcase className="w-3.5 h-3.5" />
+                      <span>{currentLanguage === 'en' ? 'Job Seeker' : 'வேலை தேடுபவர்'}</span>
+                    </button>
+                    <button
+                      onClick={() => handleSelectRole('provider')}
+                      id="front-toggle-provider"
+                      className="flex-1 sm:flex-none px-4 py-2.5 text-xs font-black font-sans uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-50/50"
+                    >
+                      <Building2 className="w-3.5 h-3.5 text-slate-400" />
+                      <span>{currentLanguage === 'en' ? 'Shop Owner' : 'கடை உரிமையாளர்'}</span>
+                    </button>
+                  </div>
+                </div>
 
-          {/* Banner community notice */}
-          <section className="bg-orange-600 text-white py-2.5 px-4 text-center shadow-xs">
-            <div className="max-w-4xl mx-auto flex items-center justify-center gap-2">
-              <span className="text-xs font-black tracking-wide leading-relaxed font-sans uppercase">
-                📢 {t.communityNotice}
-              </span>
-            </div>
-          </section>
+                {/* Hero Greeting card */}
+                <div className="bg-linear-to-r from-blue-50 to-indigo-50 border-2 border-blue-100 p-6 rounded-3xl flex flex-col md:flex-row items-center justify-between gap-4">
+                  <div className="space-y-1 text-center md:text-left">
+                    <h2 className="text-2xl font-black text-slate-800 font-sans tracking-tight">
+                      {selectedArea === 'All' 
+                        ? (currentLanguage === 'en' ? 'All Active Chennai Vacancies' : 'சென்னை முழுவதும் உள்ள வேலைகள்')
+                        : (currentLanguage === 'en' ? `Vacancies in ${selectedArea} & Surrounding` : `${AREA_MAPPINGS[selectedArea] || selectedArea} பகுதியின் வேலைகள்`)}
+                    </h2>
+                    <p className="text-xs text-slate-500 font-sans font-bold leading-relaxed">
+                      {t.tagline} • {currentLanguage === 'en' ? 'No logins required' : 'லாகின் தேவையில்லை'}
+                    </p>
+                  </div>
+                  <div className="px-4 py-2 bg-white rounded-2xl border-2 border-blue-100/50 text-center shadow-xs shrink-0">
+                    <span className="block text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                      {currentLanguage === 'en' ? 'Active Listings' : 'மொத்த விளம்பரங்கள்'}
+                    </span>
+                    <span className="text-xl font-black text-blue-600 font-mono">
+                      {filteredAndSortedJobs.length}
+                    </span>
+                  </div>
+                </div>
 
-          {/* Main Stage */}
-          <main className="max-w-4xl mx-auto px-4 py-6 flex-grow w-full">
-            
-            {/* Visual Intro Area */}
-            <div className="text-center mb-6 py-2">
-              <h2 className="text-2xl font-black text-slate-800 font-sans tracking-tight mb-1">
-                {t.brandName} — {selectedArea === 'All' ? t.allAreas : (currentLanguage === 'en' ? selectedArea : AREA_MAPPINGS[selectedArea] || selectedArea)}
-              </h2>
-              <p className="text-xs text-slate-500 font-sans font-semibold leading-relaxed">
-                {t.tagline}
-              </p>
-            </div>
+                {/* Filter and Search Panel */}
+                <div className="bg-white p-4 rounded-2xl border-2 border-slate-100 shadow-sm space-y-4">
+                  {/* Search Bar */}
+                  <div className="relative">
+                    <Search className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-400" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder={t.searchPlaceholder}
+                      className="w-full pl-10 pr-10 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl font-sans text-sm text-slate-800 placeholder-slate-400 focus:outline-hidden focus:border-blue-500 focus:bg-white transition-all"
+                      id="job-search-input"
+                    />
+                    {searchQuery && (
+                      <button
+                        onClick={() => setSearchQuery('')}
+                        className="absolute right-3.5 top-3.5 p-0.5 rounded-full hover:bg-slate-150 text-slate-400 hover:text-slate-600"
+                        title="Clear Search"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
 
-            {/* Main Segmented Navigation Switcher (Browse vs Post) */}
-            <div className="p-1.5 bg-slate-100 rounded-2xl flex max-w-sm mx-auto mb-8 border-2 border-slate-200">
-              <button
-                onClick={() => setActiveTab('browse')}
-                id="tab-btn-browse"
-                className={`flex-1 py-3 text-xs font-black font-sans uppercase tracking-wider rounded-xl transition-all cursor-pointer ${
-                  activeTab === 'browse'
-                    ? 'bg-orange-600 text-white shadow-xs'
-                    : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50/50'
-                }`}
-              >
-                {t.browseJobsTab}
-              </button>
-              <button
-                onClick={() => setActiveTab('post')}
-                id="tab-btn-post"
-                className={`flex-1 py-3 text-xs font-black font-sans uppercase tracking-wider rounded-xl transition-all cursor-pointer ${
-                  activeTab === 'post'
-                    ? 'bg-orange-600 text-white shadow-xs'
-                    : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50/50'
-                }`}
-              >
-                {t.postJobTab}
-              </button>
-            </div>
-
-            {/* TAB CONTENT */}
-            <AnimatePresence mode="wait">
-              {activeTab === 'browse' ? (
-                <motion.div
-                  key="browse-panel"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.15 }}
-                  className="space-y-6"
-                >
-                  {/* Sticky Filter & Search Control Panel */}
-                  <div className="bg-white p-4 rounded-2xl border-2 border-slate-100 shadow-sm space-y-4">
-                    {/* Search Field */}
-                    <div className="relative">
-                      <Search className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-400" />
-                      <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder={t.searchPlaceholder}
-                        className="w-full pl-10 pr-10 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl font-sans text-sm text-slate-800 placeholder-slate-400 focus:outline-hidden focus:border-orange-500 focus:bg-white transition-all"
-                        id="job-search-input"
-                      />
-                      {searchQuery && (
+                  {/* Category Chips */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center text-xs font-black text-slate-400 uppercase tracking-wider font-sans">
+                      <span>{t.categoryLabel}</span>
+                      {selectedCategory !== 'all' && (
                         <button
-                          onClick={() => setSearchQuery('')}
-                          className="absolute right-3.5 top-3.5 p-0.5 rounded-full hover:bg-slate-150 text-slate-400 hover:text-slate-600"
-                          title="Clear Search"
+                          onClick={() => setSelectedCategory('all')}
+                          id="clear-category-filter-btn"
+                          className="text-[10px] text-blue-600 hover:text-blue-700 font-black cursor-pointer uppercase"
                         >
-                          <X className="w-3.5 h-3.5" />
+                          Clear
                         </button>
                       )}
                     </div>
-
-                    {/* Category Scroll Filter chips */}
-                    <div className="space-y-2">
-                      <div className="flex justify-between items-center text-xs font-black text-slate-400 uppercase tracking-wider font-sans">
-                        <span>{t.categoryLabel}</span>
-                        {selectedCategory !== 'all' && (
-                          <button
-                            onClick={() => setSelectedCategory('all')}
-                            id="clear-category-filter-btn"
-                            className="text-[10px] text-orange-600 hover:text-orange-700 font-black cursor-pointer uppercase"
-                          >
-                            Clear
-                          </button>
-                        )}
-                      </div>
-                      
-                      <div className="flex gap-2 overflow-x-auto pb-1.5 pt-0.5 no-scrollbar scroll-smooth">
-                        {categories.map((cat) => (
-                          <button
-                            key={cat.id}
-                            onClick={() => setSelectedCategory(cat.id)}
-                            id={`category-pill-${cat.id}`}
-                            className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap border-2 transition-all cursor-pointer shrink-0 ${
-                              selectedCategory === cat.id
-                                ? 'bg-orange-600 border-orange-600 text-white'
-                                : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-800'
-                            }`}
-                          >
-                            {cat.name}
-                          </button>
-                        ))}
-                      </div>
+                    
+                    <div className="flex gap-2 overflow-x-auto pb-1.5 pt-0.5 no-scrollbar scroll-smooth">
+                      {categories.map((cat) => (
+                        <button
+                          key={cat.id}
+                          onClick={() => setSelectedCategory(cat.id)}
+                          id={`category-pill-${cat.id}`}
+                          className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap border-2 transition-all cursor-pointer shrink-0 ${
+                            selectedCategory === cat.id
+                              ? 'bg-blue-600 border-blue-600 text-white shadow-xs'
+                              : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-800'
+                          }`}
+                        >
+                          {cat.name}
+                        </button>
+                      ))}
                     </div>
                   </div>
+                </div>
 
-                  {/* Search / Filter Status Counter Message */}
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 px-1 text-xs text-slate-500 font-bold">
-                    <div>
-                      {selectedArea !== 'All' ? (
-                        <span>
-                          {currentLanguage === 'en' ? (
-                            <>
-                              Found <span className="font-black text-orange-600">{filteredAndSortedJobs.length}</span> {t.matchingJobs}.{' '}
-                              {stats.inArea > 0 ? (
-                                <>
-                                  <span className="font-black text-slate-800">{stats.inArea}</span> in {selectedArea}, and {filteredAndSortedJobs.length - stats.inArea} nearby.
-                                </>
-                              ) : (
-                                <>No active listings directly in {selectedArea} right now; showing other areas below.</>
-                              )}
-                            </>
-                          ) : (
-                            <>
-                              <span className="font-black text-orange-600">{filteredAndSortedJobs.length}</span> {t.matchingJobs}.{' '}
-                              {stats.inArea > 0 ? (
-                                <>
-                                  <span className="font-black text-slate-800">{stats.inArea}</span> வேலைகள் {AREA_MAPPINGS[selectedArea] || selectedArea}-இல் உள்ளன, மீதமுள்ளவை அருகில் உள்ளவை.
-                                </>
-                              ) : (
-                                <>{AREA_MAPPINGS[selectedArea] || selectedArea} பகுதியில் தற்போது வேலைகள் எதுவும் இல்லை; அருகில் உள்ள வேலைகள் கீழே காட்டப்படுகின்றன.</>
-                              )}
-                            </>
-                          )}
-                        </span>
-                      ) : (
-                        <span>
-                          {currentLanguage === 'en' ? (
-                            <>Showing <span className="font-black text-orange-600">{filteredAndSortedJobs.length}</span> total jobs across Chennai.</>
-                          ) : (
-                            <>சென்னையில் உள்ள <span className="font-black text-orange-600">{filteredAndSortedJobs.length}</span> மொத்த வேலைகள் காட்டப்படுகின்றன.</>
-                          )}
-                        </span>
-                      )}
+                {/* Counter & Action panel */}
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 px-1 text-xs text-slate-500 font-bold">
+                  <div>
+                    {selectedArea !== 'All' ? (
+                      <span>
+                        {currentLanguage === 'en' ? (
+                          <>
+                            Found <span className="font-black text-blue-600">{filteredAndSortedJobs.length}</span> {t.matchingJobs}.{' '}
+                            {stats.inArea > 0 ? (
+                              <>
+                                <span className="font-black text-slate-800">{stats.inArea}</span> directly in {selectedArea}, and others nearby.
+                              </>
+                            ) : (
+                              <>No listings directly in {selectedArea} right now; displaying other Chennai areas below.</>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-black text-blue-600">{filteredAndSortedJobs.length}</span> {t.matchingJobs}.{' '}
+                            {stats.inArea > 0 ? (
+                              <>
+                                <span className="font-black text-slate-800">{stats.inArea}</span> வேலைகள் {AREA_MAPPINGS[selectedArea] || selectedArea}-இல் உள்ளன.
+                              </>
+                            ) : (
+                              <>{AREA_MAPPINGS[selectedArea] || selectedArea} பகுதியில் தற்போது வேலைகள் எதுவும் இல்லை; மற்ற பகுதிகள் கீழே உள்ளன.</>
+                            )}
+                          </>
+                        )}
+                      </span>
+                    ) : (
+                      <span>
+                        {currentLanguage === 'en' ? (
+                          <>Showing <span className="font-black text-blue-600">{filteredAndSortedJobs.length}</span> total Chennai vacancies.</>
+                        ) : (
+                          <>சென்னையில் உள்ள <span className="font-black text-blue-600">{filteredAndSortedJobs.length}</span> மொத்த வேலைகள் காட்டப்படுகின்றன.</>
+                        )}
+                      </span>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={handleResetApp}
+                    id="reset-noticeboard-btn"
+                    className="flex items-center gap-1 text-[10px] font-bold text-gray-400 hover:text-rose-500 transition-colors uppercase tracking-wider cursor-pointer font-sans"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    {currentLanguage === 'en' ? 'Reset Noticeboard' : 'அறிவிப்புகளை மீட்டமை'}
+                  </button>
+                </div>
+
+                {/* Job Card Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {filteredAndSortedJobs.map((job) => (
+                    <JobCard
+                      key={job.id}
+                      job={job}
+                      userArea={selectedArea}
+                      currentLanguage={currentLanguage}
+                    />
+                  ))}
+                </div>
+
+                {/* Empty list handler */}
+                {filteredAndSortedJobs.length === 0 && (
+                  <div className="bg-white rounded-3xl p-12 border-2 border-slate-100 shadow-sm text-center space-y-4 max-w-md mx-auto" id="empty-results-banner">
+                    <div className="w-16 h-16 bg-slate-50 text-slate-400 rounded-full flex items-center justify-center mx-auto mb-2 border-2 border-slate-100">
+                      <AlertCircle className="w-8 h-8" />
                     </div>
-
-                    {/* Reset custom data if any */}
+                    <h3 className="text-base font-black text-slate-800 font-sans">
+                      {currentLanguage === 'en' ? 'No Job Matches' : 'பொருத்தமான வேலைகள் இல்லை'}
+                    </h3>
+                    <p className="text-xs text-slate-400 leading-relaxed max-w-xs mx-auto font-medium">
+                      {t.noJobsFound}
+                    </p>
                     <button
-                      onClick={handleResetApp}
-                      id="reset-noticeboard-btn"
-                      className="flex items-center gap-1 text-[10px] font-bold text-gray-400 hover:text-rose-500 transition-colors uppercase tracking-wider cursor-pointer font-sans"
+                      onClick={() => {
+                        setSearchQuery('');
+                        setSelectedCategory('all');
+                        setSelectedArea('All');
+                      }}
+                      id="clear-all-filters-btn"
+                      className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black uppercase tracking-wider rounded-xl cursor-pointer shadow-xs"
                     >
-                      <RotateCcw className="w-3 h-3" />
-                      {currentLanguage === 'en' ? 'Reset Notices' : 'அறிவிப்புகளை மீட்டமை'}
+                      {currentLanguage === 'en' ? 'Show All Chennai Jobs' : 'சென்னை முழுவதும் காட்டு'}
                     </button>
                   </div>
+                )}
 
-                  {/* GRID OF JOBS */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {filteredAndSortedJobs.map((job) => (
-                      <JobCard
-                        key={job.id}
-                        job={job}
-                        userArea={selectedArea}
-                        currentLanguage={currentLanguage}
-                      />
-                    ))}
+                {/* Help Tips section for candidate safety */}
+                <div className="p-5 bg-blue-50/40 rounded-2xl border border-blue-100 space-y-2.5">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-blue-900 flex items-center gap-1.5">
+                    💡 {currentLanguage === 'en' ? 'Job Seeker Safety & Guidelines' : 'வேலை தேடுபவர்களுக்கான வழிகாட்டுதல்கள்'}
+                  </h4>
+                  <ul className="text-xs font-medium text-slate-600 space-y-1.5 list-disc pl-4 leading-relaxed">
+                    <li>{currentLanguage === 'en' ? 'Call shop owners politely and ask about work shifts.' : 'கடை உரிமையாளரை மரியாதையுடன் அழைத்து வேலை நேரங்களைப் பற்றி கேளுங்கள்.'}</li>
+                    <li>{currentLanguage === 'en' ? 'Never pay money or deposits to get a job. Namma Area Job is 100% free.' : 'வேலைக்காக யாருக்கும் பணம் கொடுக்க வேண்டாம். நம்ம ஏரியா ஜாப் முற்றிலும் இலவசம்.'}</li>
+                    <li>{currentLanguage === 'en' ? 'Double check land marks, salary details, and weekly holidays beforehand.' : 'வேலைக்குச் சேரும் முன் சம்பளம், விடுமுறை மற்றும் வேலை விவரங்களை தெளிவாகப் பேசிக் கொள்ளுங்கள்.'}</li>
+                  </ul>
+                </div>
+              </main>
+            </div>
+          )}
+
+          {/* ========================================== */}
+          {/* 2. SHOP OWNER PORTAL                       */}
+          {/* ========================================== */}
+          {userRole === 'provider' && (
+            <div className="flex-grow flex flex-col">
+              {/* Owner Header */}
+              <header className="sticky top-0 z-40 bg-white border-b-2 border-slate-100 shadow-xs">
+                <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+                  {/* Brand Logo */}
+                  <div className="flex items-center gap-2.5 cursor-pointer">
+                    <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white font-black shadow-xs">
+                      <span className="text-xl font-black">ந</span>
+                    </div>
+                    <div>
+                      <h1 className="font-sans font-black text-lg text-slate-800 tracking-tight leading-none">
+                        {t.brandName}
+                      </h1>
+                    </div>
                   </div>
 
-                  {/* Empty state */}
-                  {filteredAndSortedJobs.length === 0 && (
-                    <div className="bg-white rounded-3xl p-12 border-2 border-slate-100 shadow-sm text-center space-y-4 max-w-md mx-auto" id="empty-results-banner">
-                      <div className="w-16 h-16 bg-slate-50 text-slate-400 rounded-full flex items-center justify-center mx-auto mb-2 border-2 border-slate-100">
-                        <AlertCircle className="w-8 h-8" />
-                      </div>
-                      <h3 className="text-base font-black text-slate-800 font-sans">
-                        {currentLanguage === 'en' ? 'No Job Matches' : 'பொருத்தமான வேலைகள் இல்லை'}
+                  {/* Top Controls */}
+                  <div className="flex items-center gap-2">
+                    {/* Language Switch */}
+                    <button
+                      onClick={handleLanguageToggle}
+                      id="header-lang-toggle"
+                      className="flex items-center justify-center w-9 h-9 rounded-xl bg-slate-50 border-2 border-slate-200 hover:bg-slate-100 text-slate-700 transition-all cursor-pointer shadow-xs shrink-0"
+                      title={currentLanguage === 'en' ? 'Switch to Tamil' : 'ஆங்கிலத்திற்கு மாறவும்'}
+                    >
+                      <Globe className="w-4 h-4 text-emerald-600" />
+                    </button>
+                  </div>
+                </div>
+              </header>
+
+              {/* Employer notice bar */}
+              <section className="bg-emerald-600 text-white py-2 px-4 text-center shadow-xs">
+                <div className="max-w-4xl mx-auto flex items-center justify-center gap-2">
+                  <span className="text-xs font-black tracking-wide leading-relaxed font-sans uppercase">
+                    📢 {currentLanguage === 'en' ? 'Recruit direct staff with zero commission or middleman charges!' : 'இடைத்தரகர் கட்டணம் இல்லாமல் உங்கள் கடைக்கான ஆட்களை இலவசமாகத் தேடுங்கள்!'}
+                  </span>
+                </div>
+              </section>
+
+              {/* Owner Main Body */}
+              <main className="max-w-4xl mx-auto px-4 py-6 flex-grow w-full space-y-6">
+                {/* Prominent Mode Selector In Front */}
+                <div className="bg-white p-4 rounded-3xl border-2 border-slate-100 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="text-center sm:text-left space-y-0.5">
+                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block">
+                      {currentLanguage === 'en' ? 'Platform Mode' : 'தளத்தின் நிலை'}
+                    </span>
+                    <span className="text-sm font-black text-slate-700">
+                      {currentLanguage === 'en' ? '📢 Hiring Staff for Shop/Business' : '📢 கடை/நிறுவனத்திற்கு ஆட்கள் தேவை'}
+                    </span>
+                  </div>
+                  
+                  <div className="p-1 bg-slate-100 rounded-2xl flex w-full sm:w-auto border border-slate-200">
+                    <button
+                      onClick={() => handleSelectRole('seeker')}
+                      id="front-toggle-seeker"
+                      className="flex-1 sm:flex-none px-4 py-2.5 text-xs font-black font-sans uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-50/50"
+                    >
+                      <Briefcase className="w-3.5 h-3.5 text-slate-400" />
+                      <span>{currentLanguage === 'en' ? 'Job Seeker' : 'வேலை தேடுபவர்'}</span>
+                    </button>
+                    <button
+                      onClick={() => handleSelectRole('provider')}
+                      id="front-toggle-provider"
+                      className="flex-1 sm:flex-none px-4 py-2.5 text-xs font-black font-sans uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 bg-emerald-600 text-white shadow-xs"
+                    >
+                      <Building2 className="w-3.5 h-3.5" />
+                      <span>{currentLanguage === 'en' ? 'Shop Owner' : 'கடை உரிமையாளர்'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Publish Job Form Area directly (Manage/tabs removed) */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  {/* Form col */}
+                  <div className="lg:col-span-2">
+                    <JobForm
+                      currentLanguage={currentLanguage}
+                      onAddJob={handleAddJob}
+                      userArea={selectedArea}
+                    />
+                  </div>
+
+                  {/* Info & wage guideline sidebar col */}
+                  <div className="space-y-6">
+                    {/* Wage Guidance Box */}
+                    <div className="bg-white rounded-3xl p-6 border-2 border-slate-100 shadow-sm space-y-4">
+                      <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider font-sans border-b pb-2 border-slate-100">
+                        💡 {currentLanguage === 'en' ? 'Salary Guidance (Chennai)' : 'சம்பள வழிகாட்டுதல் (சென்னை)'}
                       </h3>
-                      <p className="text-xs text-slate-400 leading-relaxed max-w-xs mx-auto font-medium">
-                        {t.noJobsFound}
+                      <div className="space-y-3.5 text-xs font-bold font-sans">
+                        <div className="flex justify-between items-center text-slate-600">
+                          <span>🛒 Cashier / Sales</span>
+                          <span className="text-emerald-600">₹12,000 - 18,000</span>
+                        </div>
+                        <div className="flex justify-between items-center text-slate-600">
+                          <span>🛵 Delivery Boys</span>
+                          <span className="text-emerald-600">₹15,000 - 20,000</span>
+                        </div>
+                        <div className="flex justify-between items-center text-slate-600">
+                          <span>🍳 Kitchen Masters</span>
+                          <span className="text-emerald-600">₹16,000 - 25,000</span>
+                        </div>
+                        <div className="flex justify-between items-center text-slate-600">
+                          <span>👔 Office Assistants</span>
+                          <span className="text-emerald-600">₹12,000 - 17,000</span>
+                        </div>
+                        <div className="flex justify-between items-center text-slate-600">
+                          <span>🧹 Helper / Cleaning</span>
+                          <span className="text-emerald-600">₹9,000 - 13,000</span>
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-slate-400 font-medium leading-relaxed italic pt-1.5 border-t border-slate-50">
+                        * Based on active listings in popular Chennai localities like Velachery and Anna Nagar.
                       </p>
-                      <button
-                        onClick={() => {
-                          setSearchQuery('');
-                          setSelectedCategory('all');
-                          setSelectedArea('All');
-                        }}
-                        id="clear-all-filters-btn"
-                        className="px-5 py-2.5 bg-orange-600 hover:bg-orange-700 text-white text-xs font-black uppercase tracking-wider rounded-xl cursor-pointer shadow-xs"
-                      >
-                        {currentLanguage === 'en' ? 'Show All Chennai Jobs' : 'சென்னை முழுவதும் காட்டு'}
-                      </button>
                     </div>
-                  )}
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="post-panel"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.15 }}
-                >
-                  <JobForm
-                    currentLanguage={currentLanguage}
-                    onAddJob={handleAddJob}
-                    userArea={selectedArea}
-                  />
-                </motion.div>
-              )}
-            </AnimatePresence>
 
-            {/* Live Sync Status Bar */}
-            <div className="mt-8 p-4 bg-white rounded-2xl border-2 border-slate-100 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className={`w-3 h-3 rounded-full ${
-                  isLoadingJobs 
-                    ? 'bg-slate-400 animate-pulse' 
-                    : supabaseStatus?.connected && supabaseStatus?.tableExists 
-                    ? 'bg-green-500 shadow-xs' 
-                    : 'bg-amber-500 shadow-xs'
-                }`} />
-                <div className="text-left">
-                  <span className="block text-[10px] font-black uppercase tracking-wider text-slate-400 leading-none">
-                    Database Connection Status
-                  </span>
-                  <span className="text-xs font-black text-slate-700 font-sans">
-                    {isLoadingJobs 
-                      ? 'Checking connection...' 
-                      : supabaseStatus?.connected && supabaseStatus?.tableExists 
-                      ? 'Live & Connected to Supabase' 
-                      : 'Running in Local Sandbox Mode'}
-                  </span>
+                    {/* Tips for employers */}
+                    <div className="bg-slate-900 text-slate-300 rounded-3xl p-6 space-y-4 shadow-md">
+                      <h3 className="text-xs font-black uppercase text-emerald-400 tracking-wider">
+                        🚀 {currentLanguage === 'en' ? 'Hire Staff 2x Faster' : 'வேகமாக ஆட்களைத் தேட சில வழிகள்'}
+                      </h3>
+                      <ul className="text-xs space-y-2.5 list-disc pl-4 font-medium leading-relaxed">
+                        <li>
+                          <strong>{currentLanguage === 'en' ? 'Mention food/tea' : 'உணவு/டீ வழங்கப்படுகிறதா'}</strong>:{' '}
+                          {currentLanguage === 'en' ? 'Offering meals or snacks increases views by 40%.' : 'உணவு அல்லது டீ தருவதாகக் குறிப்பிட்டால் ஆட்கள் உடனே வருவார்கள்.'}
+                        </li>
+                        <li>
+                          <strong>{currentLanguage === 'en' ? 'Be clear on shifts' : 'வேலை நேரத்தை குறிப்பிடுங்கள்'}</strong>:{' '}
+                          {currentLanguage === 'en' ? 'Specify shift times clearly (e.g. 9am to 9pm).' : 'வேலை நேரத்தைத் தெளிவாகப் போடவும்.'}
+                        </li>
+                        <li>
+                          <strong>{currentLanguage === 'en' ? 'Landmarks' : 'பக்கத்து அடையாளங்கள்'}</strong>:{' '}
+                          {currentLanguage === 'en' ? 'Add land marks (near metro station, bus stand) to help seekers.' : 'பஸ் ஸ்டாண்ட் அல்லது மெட்ரோ நிலையம் அருகில் என்று போடுவது நல்லது.'}
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
                 </div>
-              </div>
-
-              <div className="flex items-center gap-4">
-                <div className="text-right sm:text-right text-xs">
-                  <span className="block text-[10px] font-black uppercase tracking-wider text-slate-400 leading-none">
-                    Last Updated
-                  </span>
-                  <span className="font-mono font-bold text-slate-600">
-                    {getLastUpdatedText()}
-                  </span>
-                </div>
-
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleSyncSupabase}
-                    disabled={isLoadingJobs}
-                    className="p-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-350 rounded-xl transition-all cursor-pointer text-slate-600 hover:text-slate-800"
-                    title="Force sync database"
-                  >
-                    <RefreshCw className={`w-4 h-4 ${isLoadingJobs ? 'animate-spin' : ''}`} />
-                  </button>
-                  <button
-                    onClick={() => setShowSupabaseModal(true)}
-                    className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer"
-                  >
-                    Configure / Setup
-                  </button>
-                </div>
-              </div>
+              </main>
             </div>
-          </main>
+          )}
 
           {/* Footer */}
           <footer className="bg-slate-900 text-slate-400 py-10 px-4 mt-12 border-t-2 border-slate-800 text-center space-y-4">
             <div className="max-w-4xl mx-auto space-y-4">
               <div className="flex items-center justify-center gap-2">
-                <div className="w-8 h-8 bg-orange-600 text-white rounded-lg flex items-center justify-center font-black text-sm">
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-black text-sm text-white ${userRole === 'seeker' ? 'bg-blue-600' : 'bg-emerald-600'}`}>
                   ந
                 </div>
                 <span className="font-sans font-black text-white text-sm tracking-tight">
@@ -678,209 +701,6 @@ export default function App() {
                 onClose={() => setShowAreaModal(false)}
                 isOnboarding={false}
               />
-            )}
-          </AnimatePresence>
-
-          {/* Supabase Status Modal */}
-          <AnimatePresence>
-            {showSupabaseModal && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                {/* Backdrop */}
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  onClick={() => setShowSupabaseModal(false)}
-                  className="absolute inset-0 bg-slate-900/60 backdrop-blur-xs"
-                />
-
-                {/* Content Card */}
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.95, y: 15 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95, y: 15 }}
-                  className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl border-2 border-orange-150 overflow-hidden z-10"
-                >
-                  {/* Header */}
-                  <div className="p-6 bg-slate-900 text-white flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      <div className="bg-orange-600 text-white px-2 py-1 rounded-lg font-black text-xs tracking-wider uppercase">
-                        SUPABASE
-                      </div>
-                      <span className="font-sans font-black text-white text-lg tracking-tight">
-                        Database Sync Status
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => setShowSupabaseModal(false)}
-                      className="p-1 rounded-full hover:bg-slate-800 text-slate-400 hover:text-white transition-all cursor-pointer"
-                    >
-                      <X className="w-5 h-5" />
-                    </button>
-                  </div>
-
-                  {/* Body */}
-                  <div className="p-6 space-y-5">
-                    {/* Connection Stats banner */}
-                    <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                      <div className="min-w-0">
-                        <span className="block text-xs font-bold text-slate-400 uppercase tracking-wider font-mono">
-                          CONNECTION URL
-                        </span>
-                        <span className="block text-xs font-mono font-bold text-slate-700 truncate max-w-[200px] sm:max-w-xs mt-0.5">
-                          {(import.meta as any).env.VITE_SUPABASE_URL || 'https://uedogqtaxjlgoyhjndjz.supabase.co'}
-                        </span>
-                      </div>
-                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest shrink-0 ${
-                        supabaseStatus?.connected
-                          ? 'bg-green-50 text-green-700 border border-green-200'
-                          : 'bg-rose-50 text-rose-700 border border-rose-200'
-                      }`}>
-                        {supabaseStatus?.connected ? 'CONNECTED' : 'OFFLINE'}
-                      </span>
-                    </div>
-
-                    {/* Table Status Details */}
-                    <div>
-                      {isLoadingJobs ? (
-                        <div className="text-center py-6 space-y-2">
-                          <RefreshCw className="w-8 h-8 text-orange-500 animate-spin mx-auto" />
-                          <p className="text-xs font-bold text-slate-500">Checking connection and database structure...</p>
-                        </div>
-                      ) : supabaseStatus?.connected && supabaseStatus?.tableExists ? (
-                        <div className="p-4 bg-green-50 border border-green-200 rounded-2xl flex gap-3">
-                          <span className="text-xl">🟢</span>
-                          <div className="space-y-1">
-                            <h4 className="text-sm font-black text-green-800 uppercase tracking-wide leading-none">
-                              Live & Synchronized
-                            </h4>
-                            <p className="text-xs text-green-700 font-bold leading-relaxed">
-                              All jobs are successfully loaded and updated directly from the <strong>jobs</strong> table in your Supabase database.
-                            </p>
-                          </div>
-                        </div>
-                      ) : supabaseStatus?.connected && !supabaseStatus?.tableExists ? (
-                        <div className="space-y-4">
-                          <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex gap-3">
-                            <span className="text-xl">⚠️</span>
-                            <div className="space-y-1">
-                              <h4 className="text-sm font-black text-amber-800 uppercase tracking-wide leading-none">
-                                SQL Table Setup Required
-                              </h4>
-                              <p className="text-xs text-amber-700 font-bold leading-relaxed">
-                                Connected to Supabase, but the <strong className="font-extrabold">"jobs"</strong> table does not exist yet. Paste this script into your Supabase SQL Editor:
-                              </p>
-                            </div>
-                          </div>
-
-                          {/* SQL Editor script box */}
-                          <div className="relative bg-slate-900 rounded-2xl overflow-hidden shadow-inner">
-                            <div className="flex justify-between items-center px-4 py-2 bg-slate-800 text-slate-400 text-[10px] font-bold font-mono">
-                              <span>PostgreSQL Query</span>
-                              <button
-                                onClick={() => {
-                                  const sqlText = `create table jobs (
-  id text primary key,
-  business_name text not null,
-  role text not null,
-  category text not null,
-  salary text not null,
-  location text,
-  area text not null,
-  contact_number text not null,
-  description text not null,
-  posted_at timestamp with time zone default timezone('utc'::text, now()) not null
-);
-
-alter table jobs enable row level security;
-
-create policy "Allow anyone to read jobs" on jobs for select using (true);
-create policy "Allow anyone to insert jobs" on jobs for insert with check (true);`;
-                                  navigator.clipboard.writeText(sqlText);
-                                  setCopied(true);
-                                  setTimeout(() => setCopied(false), 2000);
-                                }}
-                                className="flex items-center gap-1 text-slate-300 hover:text-white cursor-pointer"
-                              >
-                                {copied ? (
-                                  <>
-                                    <Check className="w-3 h-3 text-green-400" />
-                                    <span className="text-green-400 font-black">COPIED!</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Copy className="w-3 h-3" />
-                                    <span>Copy Script</span>
-                                  </>
-                                )}
-                              </button>
-                            </div>
-                            <pre className="p-4 text-[11px] font-mono text-slate-300 overflow-x-auto leading-normal text-left max-h-40">
-{`create table jobs (
-  id text primary key,
-  business_name text not null,
-  role text not null,
-  category text not null,
-  salary text not null,
-  location text,
-  area text not null,
-  contact_number text not null,
-  description text not null,
-  posted_at timestamp with time zone default timezone('utc'::text, now()) not null
-);
-
-alter table jobs enable row level security;
-
-create policy "Allow anyone to read jobs" on jobs for select using (true);
-create policy "Allow anyone to insert jobs" on jobs for insert with check (true);`}
-                            </pre>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex gap-3">
-                          <span className="text-xl">❌</span>
-                          <div className="space-y-1">
-                            <h4 className="text-sm font-black text-rose-800 uppercase tracking-wide leading-none">
-                              Supabase Offline
-                            </h4>
-                            <p className="text-xs text-rose-700 font-bold leading-relaxed">
-                              Could not establish connection to Supabase. Check configuration credentials.
-                            </p>
-                            {supabaseStatus?.error && (
-                              <p className="text-[10px] text-rose-500 font-mono mt-1 break-all bg-white/50 p-2 rounded-lg border border-rose-100">
-                                Error: {supabaseStatus.error}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Developer note */}
-                    <div className="text-[11px] text-slate-400 leading-relaxed bg-slate-50 p-3.5 rounded-xl border border-slate-100">
-                      💡 <strong>Automatic Seeding:</strong> Once you create the <strong>jobs</strong> table, the app will automatically seed it with the default Chennai job listings!
-                    </div>
-
-                    {/* Footer Actions */}
-                    <div className="flex gap-2.5 pt-2">
-                      <button
-                        onClick={handleSyncSupabase}
-                        disabled={isLoadingJobs}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-3 bg-orange-600 hover:bg-orange-700 disabled:bg-orange-400 text-white rounded-xl font-bold text-sm cursor-pointer transition-all active:scale-98 shadow-xs"
-                      >
-                        <RefreshCw className={`w-4 h-4 ${isLoadingJobs ? 'animate-spin' : ''}`} />
-                        Check & Sync Database
-                      </button>
-                      <button
-                        onClick={() => setShowSupabaseModal(false)}
-                        className="px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-sm cursor-pointer transition-all"
-                      >
-                        Close
-                      </button>
-                    </div>
-                  </div>
-                </motion.div>
-              </div>
             )}
           </AnimatePresence>
         </>

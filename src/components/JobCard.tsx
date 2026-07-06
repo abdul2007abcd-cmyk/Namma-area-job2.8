@@ -13,6 +13,7 @@ interface JobCardProps {
   job: Job;
   userArea: string;
   currentLanguage: Language;
+  onDelete?: (id: string) => void;
 }
 
 // Function to calculate relative posted time
@@ -68,7 +69,7 @@ const getCategoryStyles = (cat: string) => {
   }
 };
 
-export default function JobCard({ job, userArea, currentLanguage }: JobCardProps) {
+export default function JobCard({ job, userArea, currentLanguage, onDelete }: JobCardProps) {
   const t = translations[currentLanguage];
   const relativeTime = getRelativeTime(job.postedAt, currentLanguage);
 
@@ -197,30 +198,43 @@ export default function JobCard({ job, userArea, currentLanguage }: JobCardProps
           </button>
         </div>
 
-        {/* Core Mobile Actions (Direct Call / WhatsApp) */}
-        <div className="flex gap-2 mt-auto">
-          {/* WhatsApp button */}
-          <a
-            href={whatsappUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            id={`whatsapp-action-${job.id}`}
-            className="flex-1 flex items-center justify-center gap-1.5 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-sm transition-all active:scale-95 cursor-pointer text-center"
+        {/* Core Mobile Actions (Direct Call / WhatsApp) or Owner Manage Actions */}
+        {onDelete ? (
+          <button
+            onClick={() => onDelete(job.id)}
+            id={`delete-action-${job.id}`}
+            className="w-full flex items-center justify-center gap-2 py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-sm transition-all active:scale-95 cursor-pointer text-center"
           >
-            <MessageSquare className="w-4 h-4 text-white shrink-0" />
-            {t.whatsappMessage}
-          </a>
+            <span>🗑️</span>
+            <span>
+              {currentLanguage === 'en' ? 'Delete Post / Mark as Filled' : 'விளம்பரத்தை நீக்கு / நிரப்பப்பட்டது'}
+            </span>
+          </button>
+        ) : (
+          <div className="flex gap-2 mt-auto">
+            {/* WhatsApp button */}
+            <a
+              href={whatsappUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              id={`whatsapp-action-${job.id}`}
+              className="flex-1 flex items-center justify-center gap-1.5 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-sm transition-all active:scale-95 cursor-pointer text-center"
+            >
+              <MessageSquare className="w-4 h-4 text-white shrink-0" />
+              {t.whatsappMessage}
+            </a>
 
-          {/* Call button */}
-          <a
-            href={telUrl}
-            id={`call-action-${job.id}`}
-            className="flex-1 flex items-center justify-center gap-1.5 py-3 bg-orange-600 hover:bg-orange-700 text-white rounded-xl font-bold text-sm transition-all active:scale-95 cursor-pointer text-center"
-          >
-            <Phone className="w-4 h-4 text-white shrink-0" />
-            {t.callNow}
-          </a>
-        </div>
+            {/* Call button */}
+            <a
+              href={telUrl}
+              id={`call-action-${job.id}`}
+              className="flex-1 flex items-center justify-center gap-1.5 py-3 bg-orange-600 hover:bg-orange-700 text-white rounded-xl font-bold text-sm transition-all active:scale-95 cursor-pointer text-center"
+            >
+              <Phone className="w-4 h-4 text-white shrink-0" />
+              {t.callNow}
+            </a>
+          </div>
+        )}
       </div>
     </motion.div>
   );
