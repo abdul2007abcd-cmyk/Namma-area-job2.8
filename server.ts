@@ -105,7 +105,7 @@ app.get('/api/jobs', async (req, res) => {
 app.post('/api/jobs', async (req, res) => {
   const { businessName, role, category, salary, location, area, contactNumber, description } = req.body;
 
-  if (!businessName || !role || !category || !salary || !location || !area || !contactNumber || !description) {
+  if (!businessName || !role || !category || !salary || !area || !contactNumber || !description) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
@@ -115,7 +115,7 @@ app.post('/api/jobs', async (req, res) => {
     role,
     category,
     salary,
-    location,
+    location: location || area, // fallback location to area if empty
     area,
     contactNumber,
     description,
