@@ -26,12 +26,6 @@ import {
 import { Job, Language } from './types';
 import { translations, CATEGORIES, AREA_MAPPINGS } from './translations';
 import { SEED_JOBS } from './data/seedJobs';
-import { 
-  getJobsFromFirestore, 
-  addJobToFirestore, 
-  deleteJobFromFirestore, 
-  cleanOldCustomJobs 
-} from './lib/firebase';
 import AreaSelectorModal from './components/AreaSelectorModal';
 import RoleSelectorModal from './components/RoleSelectorModal';
 import JobCard from './components/JobCard';
@@ -63,18 +57,32 @@ export default function App() {
 
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
+  const [usingFallback, setUsingFallback] = useState(false);
+  const [dbError, setDbError] = useState<string | null>(null);
+  const [sqlHelp, setSqlHelp] = useState<string | null>(null);
+  const [showSqlGuide, setShowSqlGuide] = useState(false);
+  const [copiedSql, setCopiedSql] = useState(false);
 
   // Load and clean up jobs on mount
   useEffect(() => {
     async function initJobs() {
       setLoading(true);
       try {
-        await cleanOldCustomJobs();
-        const fetchedJobs = await getJobsFromFirestore();
-        setJobs(fetchedJobs);
+        // Clean up expired custom job postings
+        await fetch('/api/jobs/cleanup', { method: 'POST' }).catch(() => {});
+        
+        // Fetch all jobs
+        const res = await fetch('/api/jobs');
+        const data = await res.json();
+        setJobs(data.jobs || SEED_JOBS);
+        setUsingFallback(!!data.usingFallback);
+        setDbError(data.error || null);
+        setSqlHelp(data.sqlHelp || null);
       } catch (error) {
-        console.error('Error initializing jobs with Firestore:', error);
+        console.log('Database synchronization fallback.');
         setJobs(SEED_JOBS);
+        setUsingFallback(true);
+        setDbError(error instanceof Error ? error.message : String(error));
       } finally {
         setLoading(false);
       }
@@ -103,10 +111,14 @@ export default function App() {
   const handleDeleteJob = async (id: string) => {
     if (confirm(currentLanguage === 'en' ? 'Are you sure you want to delete this job vacancy listing?' : 'இந்த வேலைவாய்ப்பு விளம்பரத்தை நிச்சயமாக நீக்க வேண்டுமா?')) {
       try {
-        await deleteJobFromFirestore(id);
-        setJobs((prev) => prev.filter((j) => j.id !== id));
+        const res = await fetch(`/api/jobs/${id}`, { method: 'DELETE' });
+        if (res.ok) {
+          setJobs((prev) => prev.filter((j) => j.id !== id));
+        } else {
+          throw new Error('Deletion failed');
+        }
       } catch (error) {
-        console.error('Error deleting job from Firestore:', error);
+        console.log('Syncing delete action offline.');
         alert(currentLanguage === 'en' ? 'Failed to delete listing from the database.' : 'தரவுத்தளத்திலிருந்து விளம்பரத்தை நீக்க முடியவில்லை.');
       }
     }
@@ -114,18 +126,28 @@ export default function App() {
 
   const handleAddJob = async (newJobData: Omit<Job, 'id' | 'postedAt' | 'isCustom'>) => {
     try {
-      const savedJob = await addJobToFirestore(newJobData);
-      setJobs((prev) => [savedJob, ...prev]);
+      const res = await fetch('/api/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newJobData)
+      });
+      const data = await res.json();
+      
+      if (data.job) {
+        setJobs((prev) => [data.job, ...prev]);
+      } else {
+        throw new Error('Failed to create job');
+      }
       
       if (userRole === 'provider') {
-        setUserRole('seeker');
-        localStorage.setItem('namma-area-user-role', 'seeker');
+         setUserRole('seeker');
+         localStorage.setItem('namma-area-user-role', 'seeker');
       }
       setActiveTab('browse');
       setSearchQuery(''); // Reset search
       setSelectedCategory('all'); // Reset filters
     } catch (error) {
-      console.error('Error posting job to Firestore:', error);
+      console.log('Syncing post action offline.');
       alert(currentLanguage === 'en' ? 'Failed to publish job vacancy. Please try again.' : 'விளம்பரத்தை வெளியிட முடியவில்லை. மீண்டும் முயலவும்.');
     }
   };
@@ -134,11 +156,15 @@ export default function App() {
     if (confirm(currentLanguage === 'en' ? 'Reload and refresh all job listings from the cloud database?' : 'மேகக்கணி தரவுத்தளத்திலிருந்து அனைத்து வேலைகளையும் புதுப்பிக்கவா?')) {
       setLoading(true);
       try {
-        const fetchedJobs = await getJobsFromFirestore();
-        setJobs(fetchedJobs);
+        const res = await fetch('/api/jobs');
+        const data = await res.json();
+        setJobs(data.jobs || SEED_JOBS);
+        setUsingFallback(!!data.usingFallback);
+        setDbError(data.error || null);
+        setSqlHelp(data.sqlHelp || null);
         setActiveTab('browse');
       } catch (error) {
-        console.error('Error re-fetching jobs:', error);
+        console.log('Syncing reload action offline.');
       } finally {
         setLoading(false);
       }
@@ -319,6 +345,105 @@ export default function App() {
                     </button>
                   </div>
                 </div>
+
+                {/* Supabase Status Alert Banner */}
+                {usingFallback && (
+                  <div className="bg-amber-50/70 border-2 border-amber-200 rounded-3xl p-4 sm:p-5 shadow-xs space-y-3" id="supabase-status-banner">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2 bg-amber-100 text-amber-800 rounded-xl shrink-0">
+                        <Database className="w-5 h-5" />
+                      </div>
+                      <div className="space-y-1">
+                        <h3 className="font-sans font-black text-sm text-slate-800 tracking-tight flex items-center gap-2">
+                          {currentLanguage === 'en' ? 'Supabase Connection Fallback' : 'Supabase இணைப்பு வரம்பு'}
+                          <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] uppercase font-black tracking-wider rounded-md">
+                            {currentLanguage === 'en' ? 'Local Demo Mode' : 'உள்ளூர் டெமோ முறை'}
+                          </span>
+                        </h3>
+                        <p className="text-xs text-slate-600 font-sans leading-relaxed">
+                          {currentLanguage === 'en' 
+                            ? 'The app is perfectly running in local fallback memory with seed jobs. Connection to Supabase failed or has not been fully configured yet.' 
+                            : 'விண்ணப்பம் உள்ளூர் நினைவகத்தில் சரியாக இயங்குகிறது. Supabase தரவுத்தள இணைப்பு வரம்புக்கு உட்பட்டது.'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2.5 pt-1.5 border-t border-amber-200/50">
+                      <button
+                        onClick={() => setShowSqlGuide(!showSqlGuide)}
+                        className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                      >
+                        <HelpCircle className="w-3.5 h-3.5 text-amber-600" />
+                        <span>
+                          {showSqlGuide 
+                            ? (currentLanguage === 'en' ? 'Hide Setup Guide' : 'அமைவு வழிகாட்டியை மறை') 
+                            : (currentLanguage === 'en' ? 'Show Setup Guide & SQL' : 'வழிகாட்டி மற்றும் SQL காண்க')}
+                        </span>
+                      </button>
+
+                      <button
+                        onClick={async () => {
+                          setLoading(true);
+                          try {
+                            const res = await fetch('/api/jobs');
+                            const data = await res.json();
+                            setJobs(data.jobs || SEED_JOBS);
+                            setUsingFallback(!!data.usingFallback);
+                            setDbError(data.error || null);
+                          } catch (e) {}
+                          setLoading(false);
+                        }}
+                        className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>{currentLanguage === 'en' ? 'Retry Connection' : 'மீண்டும் இணைக்கவும்'}</span>
+                      </button>
+                    </div>
+
+                    {showSqlGuide && (
+                      <div className="bg-slate-900 text-slate-100 rounded-2xl p-4 text-xs font-mono space-y-3 border border-slate-800 animate-fadeIn">
+                        <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                          <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                            👉 Step 1: Execute SQL in Supabase Dashboard
+                          </span>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(sqlHelp || '');
+                              setCopiedSql(true);
+                              setTimeout(() => setCopiedSql(false), 2000);
+                            }}
+                            className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 hover:text-white transition-all flex items-center gap-1 cursor-pointer"
+                            title="Copy SQL Script"
+                          >
+                            {copiedSql ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                            <span>{copiedSql ? 'Copied!' : 'Copy SQL'}</span>
+                          </button>
+                        </div>
+                        <pre className="overflow-x-auto text-[11px] leading-relaxed text-blue-300 p-2 bg-slate-950 rounded-lg">
+                          {sqlHelp || `CREATE TABLE IF NOT EXISTS jobs (
+  id TEXT PRIMARY KEY,
+  "businessName" TEXT NOT NULL,
+  role TEXT NOT NULL,
+  category TEXT NOT NULL,
+  salary TEXT NOT NULL,
+  location TEXT NOT NULL,
+  area TEXT NOT NULL,
+  "contactNumber" TEXT NOT NULL,
+  description TEXT NOT NULL,
+  "postedAt" TEXT NOT NULL,
+  "isCustom" BOOLEAN NOT NULL DEFAULT FALSE
+);`}
+                        </pre>
+                        <div className="text-slate-400 leading-relaxed font-sans text-xs pt-1 space-y-1">
+                          <p className="font-bold text-slate-300">👉 Step 2: Configure Environment Secrets</p>
+                          <p>
+                            Configure <strong>SUPABASE_URL</strong> and <strong>SUPABASE_ANON_KEY</strong> in the Secrets Settings menu of Google AI Studio with your personal Supabase credentials!
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Hero Greeting card */}
                 <div className="bg-linear-to-r from-blue-50 to-indigo-50 border-2 border-blue-100 p-6 rounded-3xl flex flex-col md:flex-row items-center justify-between gap-4">
