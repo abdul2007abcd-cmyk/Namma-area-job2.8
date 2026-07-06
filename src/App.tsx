@@ -65,14 +65,25 @@ export default function App() {
   const [isLoadingJobs, setIsLoadingJobs] = useState(true);
   const [showSupabaseModal, setShowSupabaseModal] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [timeTicker, setTimeTicker] = useState(0);
 
   // --- ACTIONS & EFFECT SYNC ---
+
+  // Timer ticker to automatically refresh time-ago string every second
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTimeTicker((prev) => prev + 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Fetch from Supabase
   const handleSyncSupabase = async () => {
     setIsLoadingJobs(true);
     const res = await fetchSupabaseJobs();
     setSupabaseStatus(res.status);
+    setLastSyncedAt(new Date());
     if (res.status.connected && res.status.tableExists) {
       // Find local custom jobs to sync online if they aren't on Supabase yet
       const saved = localStorage.getItem('namma-area-job-posts');
@@ -128,6 +139,34 @@ export default function App() {
   useEffect(() => {
     handleSyncSupabase();
   }, []);
+
+  // Periodic background polling to keep jobs and status updated automatically without blocking overlay
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchSupabaseJobs().then((res) => {
+        setSupabaseStatus(res.status);
+        setLastSyncedAt(new Date());
+        if (res.status.connected && res.status.tableExists) {
+          setJobs(res.jobs);
+          localStorage.setItem('namma-area-job-posts', JSON.stringify(res.jobs));
+        }
+      }).catch((err) => {
+        console.warn('Background sync failed:', err);
+      });
+    }, 15000); // sync every 15 seconds
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const getLastUpdatedText = () => {
+    if (!lastSyncedAt) return currentLanguage === 'en' ? 'Never' : 'இல்லை';
+    const diffMs = Date.now() - lastSyncedAt.getTime();
+    const diffSecs = Math.floor(diffMs / 1000);
+    if (diffSecs < 10) return currentLanguage === 'en' ? 'Just now' : 'சரியாக இப்போது';
+    if (diffSecs < 60) return currentLanguage === 'en' ? `${diffSecs}s ago` : `${diffSecs} விநாடிகளுக்கு முன்`;
+    const diffMins = Math.floor(diffSecs / 60);
+    return currentLanguage === 'en' ? `${diffMins}m ago` : `${diffMins} நிமிடங்களுக்கு முன்`;
+  };
 
   // Sync to local storage as safety backup
   useEffect(() => {
@@ -543,6 +582,59 @@ export default function App() {
                 </motion.div>
               )}
             </AnimatePresence>
+
+            {/* Live Sync Status Bar */}
+            <div className="mt-8 p-4 bg-white rounded-2xl border-2 border-slate-100 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className={`w-3 h-3 rounded-full ${
+                  isLoadingJobs 
+                    ? 'bg-slate-400 animate-pulse' 
+                    : supabaseStatus?.connected && supabaseStatus?.tableExists 
+                    ? 'bg-green-500 shadow-xs' 
+                    : 'bg-amber-500 shadow-xs'
+                }`} />
+                <div className="text-left">
+                  <span className="block text-[10px] font-black uppercase tracking-wider text-slate-400 leading-none">
+                    Database Connection Status
+                  </span>
+                  <span className="text-xs font-black text-slate-700 font-sans">
+                    {isLoadingJobs 
+                      ? 'Checking connection...' 
+                      : supabaseStatus?.connected && supabaseStatus?.tableExists 
+                      ? 'Live & Connected to Supabase' 
+                      : 'Running in Local Sandbox Mode'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <div className="text-right sm:text-right text-xs">
+                  <span className="block text-[10px] font-black uppercase tracking-wider text-slate-400 leading-none">
+                    Last Updated
+                  </span>
+                  <span className="font-mono font-bold text-slate-600">
+                    {getLastUpdatedText()}
+                  </span>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleSyncSupabase}
+                    disabled={isLoadingJobs}
+                    className="p-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-350 rounded-xl transition-all cursor-pointer text-slate-600 hover:text-slate-800"
+                    title="Force sync database"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isLoadingJobs ? 'animate-spin' : ''}`} />
+                  </button>
+                  <button
+                    onClick={() => setShowSupabaseModal(true)}
+                    className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer"
+                  >
+                    Configure / Setup
+                  </button>
+                </div>
+              </div>
+            </div>
           </main>
 
           {/* Footer */}
