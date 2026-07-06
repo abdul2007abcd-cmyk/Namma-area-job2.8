@@ -31,6 +31,7 @@ import RoleSelectorModal from './components/RoleSelectorModal';
 import JobCard from './components/JobCard';
 import JobForm from './components/JobForm';
 import { motion, AnimatePresence } from 'motion/react';
+import { supabase } from './lib/supabase';
 // Local storage based job notices board
 
 
@@ -68,18 +69,19 @@ export default function App() {
     async function initJobs() {
       setLoading(true);
       try {
-        // Clean up expired custom job postings
-        await fetch('/api/jobs/cleanup', { method: 'POST' }).catch(() => {});
-        
-        // Fetch all jobs
-        const res = await fetch('/api/jobs');
-        const data = await res.json();
-        setJobs(data.jobs || SEED_JOBS);
-        setUsingFallback(!!data.usingFallback);
-        setDbError(data.error || null);
-        setSqlHelp(data.sqlHelp || null);
+        const { data, error } = await supabase
+          .from('jobs')
+          .select('*')
+          .order('postedAt', { ascending: false });
+
+        if (error) {
+          throw error;
+        }
+
+        setJobs(data && data.length > 0 ? data : SEED_JOBS);
+        setUsingFallback(false);
       } catch (error) {
-        console.log('Database synchronization fallback.');
+        console.log('Database synchronization fallback.', error);
         setJobs(SEED_JOBS);
         setUsingFallback(true);
         setDbError(error instanceof Error ? error.message : String(error));
@@ -111,14 +113,18 @@ export default function App() {
   const handleDeleteJob = async (id: string) => {
     if (confirm(currentLanguage === 'en' ? 'Are you sure you want to delete this job vacancy listing?' : 'இந்த வேலைவாய்ப்பு விளம்பரத்தை நிச்சயமாக நீக்க வேண்டுமா?')) {
       try {
-        const res = await fetch(`/api/jobs/${id}`, { method: 'DELETE' });
-        if (res.ok) {
-          setJobs((prev) => prev.filter((j) => j.id !== id));
-        } else {
-          throw new Error('Deletion failed');
+        const { error } = await supabase
+          .from('jobs')
+          .delete()
+          .eq('id', id);
+
+        if (error) {
+          throw error;
         }
+
+        setJobs((prev) => prev.filter((j) => j.id !== id));
       } catch (error) {
-        console.log('Syncing delete action offline.');
+        console.log('Syncing delete action offline.', error);
         alert(currentLanguage === 'en' ? 'Failed to delete listing from the database.' : 'தரவுத்தளத்திலிருந்து விளம்பரத்தை நீக்க முடியவில்லை.');
       }
     }
@@ -126,17 +132,26 @@ export default function App() {
 
   const handleAddJob = async (newJobData: Omit<Job, 'id' | 'postedAt' | 'isCustom'>) => {
     try {
-      const res = await fetch('/api/jobs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newJobData)
-      });
-      const data = await res.json();
+      const newJob = {
+        id: `job-${Date.now()}`,
+        ...newJobData,
+        location: newJobData.location || newJobData.area,
+        postedAt: new Date().toISOString(),
+        isCustom: true
+      };
+
+      const { data, error } = await supabase
+        .from('jobs')
+        .insert([newJob])
+        .select()
+        .single();
+
+      if (error) {
+        throw error;
+      }
       
-      if (data.job) {
-        setJobs((prev) => [data.job, ...prev]);
-      } else {
-        throw new Error('Failed to create job');
+      if (data) {
+        setJobs((prev) => [data, ...prev]);
       }
       
       if (userRole === 'provider') {
@@ -147,7 +162,7 @@ export default function App() {
       setSearchQuery(''); // Reset search
       setSelectedCategory('all'); // Reset filters
     } catch (error) {
-      console.log('Syncing post action offline.');
+      console.log('Syncing post action offline.', error);
       alert(currentLanguage === 'en' ? 'Failed to publish job vacancy. Please try again.' : 'விளம்பரத்தை வெளியிட முடியவில்லை. மீண்டும் முயலவும்.');
     }
   };
@@ -156,15 +171,22 @@ export default function App() {
     if (confirm(currentLanguage === 'en' ? 'Reload and refresh all job listings from the cloud database?' : 'மேகக்கணி தரவுத்தளத்திலிருந்து அனைத்து வேலைகளையும் புதுப்பிக்கவா?')) {
       setLoading(true);
       try {
-        const res = await fetch('/api/jobs');
-        const data = await res.json();
-        setJobs(data.jobs || SEED_JOBS);
-        setUsingFallback(!!data.usingFallback);
-        setDbError(data.error || null);
-        setSqlHelp(data.sqlHelp || null);
+        const { data, error } = await supabase
+          .from('jobs')
+          .select('*')
+          .order('postedAt', { ascending: false });
+
+        if (error) {
+          throw error;
+        }
+
+        setJobs(data && data.length > 0 ? data : SEED_JOBS);
+        setUsingFallback(false);
         setActiveTab('browse');
       } catch (error) {
-        console.log('Syncing reload action offline.');
+        console.log('Syncing reload action offline.', error);
+        setUsingFallback(true);
+        setJobs(SEED_JOBS);
       } finally {
         setLoading(false);
       }
