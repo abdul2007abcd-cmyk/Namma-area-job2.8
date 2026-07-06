@@ -63,35 +63,7 @@ app.get('/api/jobs', async (req, res) => {
     }
 
     if (!data || data.length === 0) {
-      console.log('Seeding table with default records...');
-      const { error: seedError } = await supabase
-        .from('jobs')
-        .insert(SEED_JOBS.map(job => ({
-          id: job.id,
-          businessName: job.businessName,
-          role: job.role,
-          category: job.category,
-          salary: job.salary,
-          location: job.location,
-          area: job.area,
-          contactNumber: job.contactNumber,
-          description: job.description,
-          postedAt: job.postedAt,
-          isCustom: false
-        })));
-
-      if (seedError) {
-        console.log('Database fallback: seeding table offline, loading locally.');
-        return res.json({ jobs: localJobsFallback, usingFallback: true, error: seedError.message });
-      }
-
-      // Re-fetch
-      const { data: seededData } = await supabase
-        .from('jobs')
-        .select('*')
-        .order('postedAt', { ascending: false });
-
-      return res.json({ jobs: seededData || localJobsFallback, usingFallback: false });
+      return res.json({ jobs: [], usingFallback: false });
     }
 
     return res.json({ jobs: data, usingFallback: false });
