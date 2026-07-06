@@ -26,6 +26,12 @@ import {
 import { Job, Language } from './types';
 import { translations, CATEGORIES, AREA_MAPPINGS } from './translations';
 import { SEED_JOBS } from './data/seedJobs';
+import { 
+  getJobsFromFirestore, 
+  addJobToFirestore, 
+  deleteJobFromFirestore, 
+  cleanOldCustomJobs 
+} from './lib/firebase';
 import AreaSelectorModal from './components/AreaSelectorModal';
 import RoleSelectorModal from './components/RoleSelectorModal';
 import JobCard from './components/JobCard';
@@ -55,32 +61,26 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [showAreaModal, setShowAreaModal] = useState(false);
 
-  const [jobs, setJobs] = useState<Job[]>(() => {
-    const saved = localStorage.getItem('namma-area-job-posts');
-    let loadedJobs = SEED_JOBS;
-    if (saved) {
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Load and clean up jobs on mount
+  useEffect(() => {
+    async function initJobs() {
+      setLoading(true);
       try {
-        loadedJobs = JSON.parse(saved);
-      } catch (e) {
-        // Fallback to seeds if parsing fails
+        await cleanOldCustomJobs();
+        const fetchedJobs = await getJobsFromFirestore();
+        setJobs(fetchedJobs);
+      } catch (error) {
+        console.error('Error initializing jobs with Firestore:', error);
+        setJobs(SEED_JOBS);
+      } finally {
+        setLoading(false);
       }
     }
-    // Automatically delete custom job postings older than 7 days
-    const sevenDaysInMs = 7 * 24 * 60 * 60 * 1000;
-    const now = Date.now();
-    return loadedJobs.filter((job) => {
-      if (job.isCustom) {
-        const postedTime = new Date(job.postedAt).getTime();
-        return (now - postedTime) <= sevenDaysInMs;
-      }
-      return true;
-    });
-  });
-
-  // Sync to local storage when jobs change
-  useEffect(() => {
-    localStorage.setItem('namma-area-job-posts', JSON.stringify(jobs));
-  }, [jobs]);
+    initJobs();
+  }, []);
 
   const handleSelectRole = (role: 'seeker' | 'provider') => {
     setUserRole(role);
@@ -100,57 +100,48 @@ export default function App() {
     localStorage.setItem('namma-area-job-lang', nextLang);
   };
 
-  const handleDeleteJob = (id: string) => {
+  const handleDeleteJob = async (id: string) => {
     if (confirm(currentLanguage === 'en' ? 'Are you sure you want to delete this job vacancy listing?' : 'இந்த வேலைவாய்ப்பு விளம்பரத்தை நிச்சயமாக நீக்க வேண்டுமா?')) {
-      setJobs((prev) => prev.filter((j) => j.id !== id));
-      const saved = localStorage.getItem('namma-area-job-posts');
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved) as Job[];
-          const updated = parsed.filter((j) => j.id !== id);
-          localStorage.setItem('namma-area-job-posts', JSON.stringify(updated));
-        } catch (e) {}
+      try {
+        await deleteJobFromFirestore(id);
+        setJobs((prev) => prev.filter((j) => j.id !== id));
+      } catch (error) {
+        console.error('Error deleting job from Firestore:', error);
+        alert(currentLanguage === 'en' ? 'Failed to delete listing from the database.' : 'தரவுத்தளத்திலிருந்து விளம்பரத்தை நீக்க முடியவில்லை.');
       }
     }
   };
 
-  const handleAddJob = (newJobData: Omit<Job, 'id' | 'postedAt' | 'isCustom'>) => {
-    const newJob: Job = {
-      ...newJobData,
-      id: `job-${Date.now()}`,
-      postedAt: new Date().toISOString(),
-      isCustom: true
-    };
-
-    // Update local state immediately so user sees the new post
-    setJobs((prev) => [newJob, ...prev]);
-    
-    if (userRole === 'provider') {
-      setUserRole('seeker');
-      localStorage.setItem('namma-area-user-role', 'seeker');
+  const handleAddJob = async (newJobData: Omit<Job, 'id' | 'postedAt' | 'isCustom'>) => {
+    try {
+      const savedJob = await addJobToFirestore(newJobData);
+      setJobs((prev) => [savedJob, ...prev]);
+      
+      if (userRole === 'provider') {
+        setUserRole('seeker');
+        localStorage.setItem('namma-area-user-role', 'seeker');
+      }
+      setActiveTab('browse');
+      setSearchQuery(''); // Reset search
+      setSelectedCategory('all'); // Reset filters
+    } catch (error) {
+      console.error('Error posting job to Firestore:', error);
+      alert(currentLanguage === 'en' ? 'Failed to publish job vacancy. Please try again.' : 'விளம்பரத்தை வெளியிட முடியவில்லை. மீண்டும் முயலவும்.');
     }
-    setActiveTab('browse');
-    setSearchQuery(''); // Reset search
-    setSelectedCategory('all'); // Reset filters
-
-    // Ensure we update backup cache immediately
-    const saved = localStorage.getItem('namma-area-job-posts');
-    let currentLocalJobs = SEED_JOBS;
-    if (saved) {
-      try {
-        currentLocalJobs = JSON.parse(saved);
-      } catch (e) {}
-    }
-    localStorage.setItem('namma-area-job-posts', JSON.stringify([newJob, ...currentLocalJobs]));
   };
 
-  const handleResetApp = () => {
-    if (confirm(currentLanguage === 'en' ? 'Reset noticeboard back to default jobs?' : 'அறிவிப்புப் பலகையை பழைய நிலைக்கு மீட்டமைக்கவா?')) {
-      setSelectedArea('');
-      localStorage.removeItem('namma-area-job-area');
-      setJobs(SEED_JOBS);
-      localStorage.setItem('namma-area-job-posts', JSON.stringify(SEED_JOBS));
-      setActiveTab('browse');
+  const handleResetApp = async () => {
+    if (confirm(currentLanguage === 'en' ? 'Reload and refresh all job listings from the cloud database?' : 'மேகக்கணி தரவுத்தளத்திலிருந்து அனைத்து வேலைகளையும் புதுப்பிக்கவா?')) {
+      setLoading(true);
+      try {
+        const fetchedJobs = await getJobsFromFirestore();
+        setJobs(fetchedJobs);
+        setActiveTab('browse');
+      } catch (error) {
+        console.error('Error re-fetching jobs:', error);
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
@@ -461,18 +452,40 @@ export default function App() {
 
                 {/* Job Card Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {filteredAndSortedJobs.map((job) => (
-                    <JobCard
-                      key={job.id}
-                      job={job}
-                      userArea={selectedArea}
-                      currentLanguage={currentLanguage}
-                    />
-                  ))}
+                  {loading ? (
+                    Array.from({ length: 4 }).map((_, i) => (
+                      <div key={i} className="bg-white rounded-2xl border-2 border-slate-100 p-5 animate-pulse space-y-4">
+                        <div className="flex justify-between items-center">
+                          <div className="h-6 w-24 bg-slate-200 rounded-full"></div>
+                          <div className="h-4 w-16 bg-slate-200 rounded"></div>
+                        </div>
+                        <div className="h-6 w-3/4 bg-slate-200 rounded"></div>
+                        <div className="h-4 w-1/2 bg-slate-200 rounded"></div>
+                        <div className="space-y-2">
+                          <div className="h-4 w-full bg-slate-100 rounded"></div>
+                          <div className="h-4 w-5/6 bg-slate-100 rounded"></div>
+                        </div>
+                        <div className="pt-4 border-t border-slate-100 flex gap-2">
+                          <div className="h-10 flex-1 bg-slate-200 rounded-xl"></div>
+                          <div className="h-10 flex-1 bg-slate-200 rounded-xl"></div>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    filteredAndSortedJobs.map((job) => (
+                      <JobCard
+                        key={job.id}
+                        job={job}
+                        userArea={selectedArea}
+                        currentLanguage={currentLanguage}
+                        onDelete={job.isCustom ? handleDeleteJob : undefined}
+                      />
+                    ))
+                  )}
                 </div>
 
                 {/* Empty list handler */}
-                {filteredAndSortedJobs.length === 0 && (
+                {!loading && filteredAndSortedJobs.length === 0 && (
                   <div className="bg-white rounded-3xl p-12 border-2 border-slate-100 shadow-sm text-center space-y-4 max-w-md mx-auto" id="empty-results-banner">
                     <div className="w-16 h-16 bg-slate-50 text-slate-400 rounded-full flex items-center justify-center mx-auto mb-2 border-2 border-slate-100">
                       <AlertCircle className="w-8 h-8" />
