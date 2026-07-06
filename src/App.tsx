@@ -27,7 +27,6 @@ import { Job, Language } from './types';
 import { translations, CATEGORIES, AREA_MAPPINGS } from './translations';
 import { SEED_JOBS } from './data/seedJobs';
 import AreaSelectorModal from './components/AreaSelectorModal';
-import RoleSelectorModal from './components/RoleSelectorModal';
 import JobCard from './components/JobCard';
 import JobForm from './components/JobForm';
 import { motion, AnimatePresence } from 'motion/react';
@@ -39,7 +38,7 @@ import { supabase } from './lib/supabase';
 export default function App() {
   // --- STATE ---
   const [selectedArea, setSelectedArea] = useState<string>(() => {
-    return localStorage.getItem('namma-area-job-area') || '';
+    return localStorage.getItem('namma-area-job-area') || 'All';
   });
 
   const [currentLanguage, setCurrentLanguage] = useState<Language>(() => {
@@ -47,11 +46,30 @@ export default function App() {
     return (savedLang === 'en' || savedLang === 'ta') ? savedLang : 'en';
   });
 
-  const [userRole, setUserRole] = useState<'seeker' | 'provider' | null>(() => {
-    return (localStorage.getItem('namma-area-user-role') as 'seeker' | 'provider' | null) || null;
+  const [userRole, setUserRole] = useState<'seeker' | 'provider'>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const urlRole = params.get('role');
+      if (urlRole === 'provider' || urlRole === 'owner') {
+        return 'provider';
+      }
+    } catch (e) {
+      console.warn('URL parsing failed:', e);
+    }
+    const savedRole = localStorage.getItem('namma-area-user-role');
+    if (savedRole === 'provider') return 'provider';
+    return 'seeker';
   });
 
   const [activeTab, setActiveTab] = useState<'browse' | 'post'>('browse');
+  const [providerSubTab, setProviderSubTab] = useState<'post' | 'my-listings'>('post');
+  const [myPostedIds, setMyPostedIds] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('namma-area-posted-jobs') || '[]');
+    } catch {
+      return [];
+    }
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [showAreaModal, setShowAreaModal] = useState(false);
@@ -147,13 +165,13 @@ export default function App() {
       
       if (data) {
         setJobs((prev) => [data, ...prev]);
+        const updatedIds = [...myPostedIds, data.id];
+        setMyPostedIds(updatedIds);
+        localStorage.setItem('namma-area-posted-jobs', JSON.stringify(updatedIds));
       }
       
-      if (userRole === 'provider') {
-         setUserRole('seeker');
-         localStorage.setItem('namma-area-user-role', 'seeker');
-      }
-      setActiveTab('browse');
+      // Successfully published! Stay on provider tab but view listings
+      setProviderSubTab('my-listings');
       setSearchQuery(''); // Reset search
       setSelectedCategory('all'); // Reset filters
     } catch (error) {
@@ -204,6 +222,33 @@ export default function App() {
   const t = translations[currentLanguage];
   const categories = CATEGORIES[currentLanguage];
 
+  const getRemainingTime = (postedAtStr: string, lang: Language) => {
+    const postedTime = new Date(postedAtStr).getTime();
+    const expiryTime = postedTime + 7 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const diff = expiryTime - now;
+
+    if (diff <= 0) {
+      return lang === 'en' ? 'Expired' : 'காலாவதியானது';
+    }
+
+    const days = Math.floor(diff / (24 * 60 * 60 * 1000));
+    const hours = Math.floor((diff % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+
+    if (days > 0) {
+      return lang === 'en' 
+        ? `${days}d ${hours}h left` 
+        : `இன்னும் ${days}நாட்கள் ${hours}ம`;
+    }
+    return lang === 'en' 
+      ? `${hours}h left` 
+      : `இன்னும் ${hours}ம`;
+  };
+
+  const myActiveListings = useMemo(() => {
+    return jobs.filter((j) => myPostedIds.includes(j.id));
+  }, [jobs, myPostedIds]);
+
   // Area and Category filter and sorting logic
   const filteredAndSortedJobs = useMemo(() => {
     // 1. Filter by category
@@ -237,38 +282,18 @@ export default function App() {
     });
   }, [jobs, selectedCategory, searchQuery, selectedArea]);
 
-  // Determine if onboarding overlay is needed
-  const isRoleOnboarding = userRole === null;
-  const isAreaOnboarding = !isRoleOnboarding && selectedArea === '';
-  const isOnboarding = isRoleOnboarding || isAreaOnboarding;
-
   return (
     <div className="min-h-screen bg-slate-50/50 flex flex-col justify-between" id="namma-area-app-root">
-      {/* A. Role Selector Onboarding */}
-      <RoleSelectorModal
-        currentLanguage={currentLanguage}
-        onLanguageToggle={handleLanguageToggle}
-        onSelectRole={handleSelectRole}
-        isOpen={isRoleOnboarding}
-      />
-
-      {/* B. Area Selector Onboarding */}
-      <AreaSelectorModal
-        currentLanguage={currentLanguage}
-        onLanguageToggle={handleLanguageToggle}
-        onSelectArea={handleSelectArea}
-        isOpen={isAreaOnboarding}
-        isOnboarding={true}
-      />
-
-      {/* 2. Main Page content if onboarded */}
-      {!isOnboarding && (
-        <>
           {/* ========================================== */}
           {/* 1. JOB SEEKER PORTAL                       */}
           {/* ========================================== */}
           {userRole === 'seeker' && (
-            <div className="flex-grow flex flex-col">
+            <motion.div
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.25, ease: 'easeOut' }}
+              className="flex-grow flex flex-col"
+            >
               {/* Seeker Header */}
               <header className="sticky top-0 z-40 bg-white border-b-2 border-slate-100 shadow-xs">
                 <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
@@ -285,12 +310,12 @@ export default function App() {
                   </div>
 
                   {/* Top Controls */}
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
                     {/* Area Select Button */}
                     <button
                       onClick={() => setShowAreaModal(true)}
                       id="header-change-area-btn"
-                      className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-900 rounded-xl border-2 border-blue-200 text-xs font-black transition-all cursor-pointer shadow-xs max-w-[120px] sm:max-w-none truncate shrink-0"
+                      className="flex items-center gap-1 px-2 py-2 bg-blue-50 hover:bg-blue-100 text-blue-900 rounded-xl border-2 border-blue-200 text-[10px] sm:text-xs font-black transition-all cursor-pointer shadow-xs max-w-[90px] sm:max-w-none truncate shrink-0"
                     >
                       <MapPin className="w-3.5 h-3.5 text-blue-600 shrink-0" />
                       <span className="truncate">
@@ -319,46 +344,13 @@ export default function App() {
               <section className="bg-blue-600 text-white py-2 px-4 text-center shadow-xs">
                 <div className="max-w-4xl mx-auto flex items-center justify-center gap-2">
                   <span className="text-xs font-black tracking-wide leading-relaxed font-sans uppercase">
-                    📢 {t.communityNotice}
+                    📢 {currentLanguage === 'en' ? 'Find your local job directly with zero agent commission!' : 'ஏஜென்ட் கமிஷன் இல்லாமல் உங்கள் பகுதியிலேயே நேரடியாக வேலை தேடுங்கள்!'}
                   </span>
                 </div>
               </section>
 
               {/* Seeker Main Body */}
               <main className="max-w-4xl mx-auto px-4 py-6 flex-grow w-full space-y-6">
-                {/* Prominent Mode Selector In Front */}
-                <div className="bg-white p-4 rounded-3xl border-2 border-slate-100 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
-                  <div className="text-center sm:text-left space-y-0.5">
-                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block">
-                      {currentLanguage === 'en' ? 'Platform Mode' : 'தளத்தின் நிலை'}
-                    </span>
-                    <span className="text-sm font-black text-slate-700">
-                      {currentLanguage === 'en' ? '🔍 Looking for Job Vacancies' : '🔍 வேலைகளைத் தேடுகிறீர்கள்'}
-                    </span>
-                  </div>
-                  
-                  <div className="p-1 bg-slate-100 rounded-2xl flex w-full sm:w-auto border border-slate-200">
-                    <button
-                      onClick={() => handleSelectRole('seeker')}
-                      id="front-toggle-seeker"
-                      className="flex-1 sm:flex-none px-4 py-2.5 text-xs font-black font-sans uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 bg-blue-600 text-white shadow-xs"
-                    >
-                      <Briefcase className="w-3.5 h-3.5" />
-                      <span>{currentLanguage === 'en' ? 'Job Seeker' : 'வேலை தேடுபவர்'}</span>
-                    </button>
-                    <button
-                      onClick={() => handleSelectRole('provider')}
-                      id="front-toggle-provider"
-                      className="flex-1 sm:flex-none px-4 py-2.5 text-xs font-black font-sans uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-50/50"
-                    >
-                      <Building2 className="w-3.5 h-3.5 text-slate-400" />
-                      <span>{currentLanguage === 'en' ? 'Shop Owner' : 'கடை உரிமையாளர்'}</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Supabase Status Alert Banner removed as per user request */}
-
                 {/* Hero Greeting card */}
                 <div className="bg-linear-to-r from-blue-50 to-indigo-50 border-2 border-blue-100 p-6 rounded-3xl flex flex-col md:flex-row items-center justify-between gap-4">
                   <div className="space-y-1 text-center md:text-left">
@@ -546,14 +538,19 @@ export default function App() {
                   </ul>
                 </div>
               </main>
-            </div>
+            </motion.div>
           )}
 
           {/* ========================================== */}
           {/* 2. SHOP OWNER PORTAL                       */}
           {/* ========================================== */}
           {userRole === 'provider' && (
-            <div className="flex-grow flex flex-col">
+            <motion.div
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.25, ease: 'easeOut' }}
+              className="flex-grow flex flex-col"
+            >
               {/* Owner Header */}
               <header className="sticky top-0 z-40 bg-white border-b-2 border-slate-100 shadow-xs">
                 <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
@@ -570,7 +567,7 @@ export default function App() {
                   </div>
 
                   {/* Top Controls */}
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
                     {/* Language Switch */}
                     <button
                       onClick={handleLanguageToggle}
@@ -595,106 +592,208 @@ export default function App() {
 
               {/* Owner Main Body */}
               <main className="max-w-4xl mx-auto px-4 py-6 flex-grow w-full space-y-6">
-                {/* Prominent Mode Selector In Front */}
-                <div className="bg-white p-4 rounded-3xl border-2 border-slate-100 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
-                  <div className="text-center sm:text-left space-y-0.5">
-                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block">
-                      {currentLanguage === 'en' ? 'Platform Mode' : 'தளத்தின் நிலை'}
+                {/* Sub-tab Navigation for Shop Owners */}
+                <div className="flex border-b border-slate-200">
+                  <button
+                    onClick={() => setProviderSubTab('post')}
+                    id="provider-subtab-post"
+                    className={`flex-1 py-3 text-center border-b-2 font-sans font-black text-xs uppercase tracking-wider transition-all cursor-pointer ${
+                      providerSubTab === 'post'
+                        ? 'border-emerald-600 text-emerald-700'
+                        : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    📝 {currentLanguage === 'en' ? 'Post New Vacancy' : 'வேலை விளம்பரம் போடு'}
+                  </button>
+                  <button
+                    onClick={() => setProviderSubTab('my-listings')}
+                    id="provider-subtab-listings"
+                    className={`flex-1 py-3 text-center border-b-2 font-sans font-black text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      providerSubTab === 'my-listings'
+                        ? 'border-emerald-600 text-emerald-700'
+                        : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    💼 {currentLanguage === 'en' ? 'My Shop Listings' : 'எனது விளம்பரங்கள்'}
+                    <span className={`px-2 py-0.5 text-[10px] rounded-full font-black leading-none ${
+                      providerSubTab === 'my-listings' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
+                    }`}>
+                      {myActiveListings.length}
                     </span>
-                    <span className="text-sm font-black text-slate-700">
-                      {currentLanguage === 'en' ? '📢 Hiring Staff for Shop/Business' : '📢 கடை/நிறுவனத்திற்கு ஆட்கள் தேவை'}
-                    </span>
-                  </div>
-                  
-                  <div className="p-1 bg-slate-100 rounded-2xl flex w-full sm:w-auto border border-slate-200">
-                    <button
-                      onClick={() => handleSelectRole('seeker')}
-                      id="front-toggle-seeker"
-                      className="flex-1 sm:flex-none px-4 py-2.5 text-xs font-black font-sans uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-50/50"
-                    >
-                      <Briefcase className="w-3.5 h-3.5 text-slate-400" />
-                      <span>{currentLanguage === 'en' ? 'Job Seeker' : 'வேலை தேடுபவர்'}</span>
-                    </button>
-                    <button
-                      onClick={() => handleSelectRole('provider')}
-                      id="front-toggle-provider"
-                      className="flex-1 sm:flex-none px-4 py-2.5 text-xs font-black font-sans uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 bg-emerald-600 text-white shadow-xs"
-                    >
-                      <Building2 className="w-3.5 h-3.5" />
-                      <span>{currentLanguage === 'en' ? 'Shop Owner' : 'கடை உரிமையாளர்'}</span>
-                    </button>
-                  </div>
+                  </button>
                 </div>
 
-                {/* Publish Job Form Area directly (Manage/tabs removed) */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  {/* Form col */}
-                  <div className="lg:col-span-2">
-                    <JobForm
-                      currentLanguage={currentLanguage}
-                      onAddJob={handleAddJob}
-                      userArea={selectedArea}
-                    />
-                  </div>
+                {providerSubTab === 'post' && (
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    {/* Form col */}
+                    <div className="lg:col-span-2">
+                      <JobForm
+                        currentLanguage={currentLanguage}
+                        onAddJob={handleAddJob}
+                        userArea={selectedArea}
+                      />
+                    </div>
 
-                  {/* Info & wage guideline sidebar col */}
-                  <div className="space-y-6">
-                    {/* Wage Guidance Box */}
-                    <div className="bg-white rounded-3xl p-6 border-2 border-slate-100 shadow-sm space-y-4">
-                      <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider font-sans border-b pb-2 border-slate-100">
-                        💡 {currentLanguage === 'en' ? 'Salary Guidance (Chennai)' : 'சம்பள வழிகாட்டுதல் (சென்னை)'}
-                      </h3>
-                      <div className="space-y-3.5 text-xs font-bold font-sans">
-                        <div className="flex justify-between items-center text-slate-600">
-                          <span>🛒 Cashier / Sales</span>
-                          <span className="text-emerald-600">₹12,000 - 18,000</span>
+                    {/* Info & wage guideline sidebar col */}
+                    <div className="space-y-6">
+                      {/* Wage Guidance Box */}
+                      <div className="bg-white rounded-3xl p-6 border-2 border-slate-100 shadow-sm space-y-4">
+                        <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider font-sans border-b pb-2 border-slate-100">
+                          💡 {currentLanguage === 'en' ? 'Salary Guidance (Chennai)' : 'சம்பள வழிகாட்டுதல் (சென்னை)'}
+                        </h3>
+                        <div className="space-y-3.5 text-xs font-bold font-sans">
+                          <div className="flex justify-between items-center text-slate-600">
+                            <span>🛒 Cashier / Sales</span>
+                            <span className="text-emerald-600">₹12,000 - 18,000</span>
+                          </div>
+                          <div className="flex justify-between items-center text-slate-600">
+                            <span>🛵 Delivery Boys</span>
+                            <span className="text-emerald-600">₹15,000 - 20,000</span>
+                          </div>
+                          <div className="flex justify-between items-center text-slate-600">
+                            <span>🍳 Kitchen Masters</span>
+                            <span className="text-emerald-600">₹16,000 - 25,000</span>
+                          </div>
+                          <div className="flex justify-between items-center text-slate-600">
+                            <span>👔 Office Assistants</span>
+                            <span className="text-emerald-600">₹12,000 - 17,000</span>
+                          </div>
+                          <div className="flex justify-between items-center text-slate-600">
+                            <span>🧹 Helper / Cleaning</span>
+                            <span className="text-emerald-600">₹9,000 - 13,000</span>
+                          </div>
                         </div>
-                        <div className="flex justify-between items-center text-slate-600">
-                          <span>🛵 Delivery Boys</span>
-                          <span className="text-emerald-600">₹15,000 - 20,000</span>
-                        </div>
-                        <div className="flex justify-between items-center text-slate-600">
-                          <span>🍳 Kitchen Masters</span>
-                          <span className="text-emerald-600">₹16,000 - 25,000</span>
-                        </div>
-                        <div className="flex justify-between items-center text-slate-600">
-                          <span>👔 Office Assistants</span>
-                          <span className="text-emerald-600">₹12,000 - 17,000</span>
-                        </div>
-                        <div className="flex justify-between items-center text-slate-600">
-                          <span>🧹 Helper / Cleaning</span>
-                          <span className="text-emerald-600">₹9,000 - 13,000</span>
-                        </div>
+                        <p className="text-[10px] text-slate-400 font-medium leading-relaxed italic pt-1.5 border-t border-slate-50">
+                          * Based on active listings in popular Chennai localities like Velachery and Anna Nagar.
+                        </p>
                       </div>
-                      <p className="text-[10px] text-slate-400 font-medium leading-relaxed italic pt-1.5 border-t border-slate-50">
-                        * Based on active listings in popular Chennai localities like Velachery and Anna Nagar.
-                      </p>
-                    </div>
 
-                    {/* Tips for employers */}
-                    <div className="bg-slate-900 text-slate-300 rounded-3xl p-6 space-y-4 shadow-md">
-                      <h3 className="text-xs font-black uppercase text-emerald-400 tracking-wider">
-                        🚀 {currentLanguage === 'en' ? 'Hire Staff 2x Faster' : 'வேகமாக ஆட்களைத் தேட சில வழிகள்'}
-                      </h3>
-                      <ul className="text-xs space-y-2.5 list-disc pl-4 font-medium leading-relaxed">
-                        <li>
-                          <strong>{currentLanguage === 'en' ? 'Mention food/tea' : 'உணவு/டீ வழங்கப்படுகிறதா'}</strong>:{' '}
-                          {currentLanguage === 'en' ? 'Offering meals or snacks increases views by 40%.' : 'உணவு அல்லது டீ தருவதாகக் குறிப்பிட்டால் ஆட்கள் உடனே வருவார்கள்.'}
-                        </li>
-                        <li>
-                          <strong>{currentLanguage === 'en' ? 'Be clear on shifts' : 'வேலை நேரத்தை குறிப்பிடுங்கள்'}</strong>:{' '}
-                          {currentLanguage === 'en' ? 'Specify shift times clearly (e.g. 9am to 9pm).' : 'வேலை நேரத்தைத் தெளிவாகப் போடவும்.'}
-                        </li>
-                        <li>
-                          <strong>{currentLanguage === 'en' ? 'Landmarks' : 'பக்கத்து அடையாளங்கள்'}</strong>:{' '}
-                          {currentLanguage === 'en' ? 'Add land marks (near metro station, bus stand) to help seekers.' : 'பஸ் ஸ்டாண்ட் அல்லது மெட்ரோ நிலையம் அருகில் என்று போடுவது நல்லது.'}
-                        </li>
-                      </ul>
+                      {/* Tips for employers */}
+                      <div className="bg-slate-900 text-slate-300 rounded-3xl p-6 space-y-4 shadow-md">
+                        <h3 className="text-xs font-black uppercase text-emerald-400 tracking-wider">
+                          🚀 {currentLanguage === 'en' ? 'Hire Staff 2x Faster' : 'வேகமாக ஆட்களைத் தேட சில வழிகள்'}
+                        </h3>
+                        <ul className="text-xs space-y-2.5 list-disc pl-4 font-medium leading-relaxed">
+                          <li>
+                            <strong>{currentLanguage === 'en' ? 'Mention food/tea' : 'உணவு/டீ வழங்கப்படுகிறதா'}</strong>:{' '}
+                            {currentLanguage === 'en' ? 'Offering meals or snacks increases views by 40%.' : 'உணவு அல்லது டீ தருவதாகக் குறிப்பிட்டால் ஆட்கள் உடனே வருவார்கள்.'}
+                          </li>
+                          <li>
+                            <strong>{currentLanguage === 'en' ? 'Be clear on shifts' : 'வேலை நேரத்தை குறிப்பிடுங்கள்'}</strong>:{' '}
+                            {currentLanguage === 'en' ? 'Specify shift times clearly (e.g. 9am to 9pm).' : 'வேலை நேரத்தைத் தெளிவாகப் போடவும்.'}
+                          </li>
+                          <li>
+                            <strong>{currentLanguage === 'en' ? 'Landmarks' : 'பக்கத்து அடையாளங்கள்'}</strong>:{' '}
+                            {currentLanguage === 'en' ? 'Add land marks (near metro station, bus stand) to help seekers.' : 'பஸ் ஸ்டாண்ட் அல்லது மெட்ரோ நிலையம் அருகில் என்று போடுவது நல்லது.'}
+                          </li>
+                        </ul>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
+
+                {providerSubTab === 'my-listings' && (
+                  <div className="space-y-6">
+                    {/* Explanatory 7-day auto-expiry Banner */}
+                    <div className="bg-amber-50/70 border border-amber-200/60 rounded-3xl p-5 sm:p-6 flex flex-col sm:flex-row items-start gap-4 shadow-xs">
+                      <div className="p-3 bg-amber-100 text-amber-800 rounded-2xl shrink-0 flex items-center justify-center">
+                        <span className="text-xl">⏱️</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        <h3 className="font-sans font-black text-xs text-amber-950 tracking-wide uppercase">
+                          {currentLanguage === 'en' 
+                            ? '7-Day Automatic Expiration Policy' 
+                            : '7 நாட்கள் தானியங்கி விளம்பர நீக்கம்'}
+                        </h3>
+                        <p className="text-xs text-amber-900/80 leading-relaxed font-medium">
+                          {currentLanguage === 'en' 
+                            ? 'To keep job seeker listings fresh, relevant, and accurate, all vacant positions automatically disappear exactly 7 days after publication. No manual deletion or login is ever required!' 
+                            : 'விண்ணப்பதாரர்களுக்கு எப்போதும் புதிய மற்றும் துல்லியமான வேலைவாய்ப்பு தகவல்களைக் காட்ட, அனைத்து விளம்பரங்களும் வெளியிடப்பட்ட 7 நாட்களுக்குப் பிறகு தானாகவே நீக்கப்படும். நீங்கள் தனியாக லாகின் செய்யவோ அல்லது நீக்கவோ தேவையில்லை!'}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Listings Grid */}
+                    {myActiveListings.length === 0 ? (
+                      <div className="bg-white rounded-3xl p-12 border-2 border-slate-100 text-center space-y-4 max-w-md mx-auto">
+                        <div className="w-16 h-16 bg-slate-50 text-slate-400 rounded-full flex items-center justify-center mx-auto mb-2 border border-slate-100">
+                          <span className="text-3xl">💼</span>
+                        </div>
+                        <h3 className="text-sm font-black text-slate-800 font-sans">
+                          {currentLanguage === 'en' ? 'No Active Listings' : 'விளம்பரங்கள் எதுவும் இல்லை'}
+                        </h3>
+                        <p className="text-xs text-slate-400 leading-relaxed max-w-xs mx-auto font-medium">
+                          {currentLanguage === 'en' 
+                            ? "You haven't posted any job vacancies in this browser yet, or your previous posts have expired after 7 days." 
+                            : 'நீங்கள் இன்னும் எந்த வேலைவாய்ப்பு விளம்பரங்களையும் வெளியிடவில்லை அல்லது உங்களது முந்தைய விளம்பரங்களின் காலம் முடிவடைந்திருக்கலாம்.'}
+                        </p>
+                        <button
+                          onClick={() => setProviderSubTab('post')}
+                          id="no-listings-post-btn"
+                          className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black uppercase tracking-wider rounded-xl cursor-pointer shadow-xs active:scale-95 transition-all"
+                        >
+                          ➕ {currentLanguage === 'en' ? 'Post Your First Job' : 'விளம்பரம் வெளியிடவும்'}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {myActiveListings.map((job) => (
+                          <div 
+                            key={job.id} 
+                            className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-150 shadow-xs flex flex-col justify-between space-y-4 relative overflow-hidden"
+                          >
+                            {/* 7-Day Countdown Badge */}
+                            <div className="absolute top-4 right-4 bg-amber-50 text-amber-800 px-2.5 py-1 rounded-xl text-[10px] font-black tracking-wide flex items-center gap-1 border border-amber-100">
+                              <span>⏱️</span>
+                              <span>{getRemainingTime(job.postedAt, currentLanguage)}</span>
+                            </div>
+
+                            <div className="space-y-2">
+                              <div className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-emerald-50 text-emerald-800 rounded-lg text-[10px] font-black uppercase tracking-wider border border-emerald-100/50">
+                                <span>🟢 {currentLanguage === 'en' ? 'Live & Active' : 'நேரலையில் உள்ளது'}</span>
+                              </div>
+
+                              <h4 className="text-sm font-black text-slate-800 font-sans leading-tight pr-24 pt-1">
+                                {job.role}
+                              </h4>
+                              <p className="text-xs font-bold text-slate-600 flex items-center gap-1">
+                                <span>🏢</span> {job.businessName}
+                              </p>
+
+                              <div className="grid grid-cols-2 gap-2 pt-2 text-xs font-bold text-slate-500 font-sans">
+                                <div className="flex items-center gap-1">
+                                  <span>📍</span> {currentLanguage === 'en' ? job.area : (AREA_MAPPINGS[job.area] || job.area)}
+                                </div>
+                                <div className="flex items-center gap-1 text-emerald-600">
+                                  <span>💰</span> {job.salary}
+                                </div>
+                              </div>
+
+                              <p className="text-xs text-slate-500 font-medium leading-relaxed bg-slate-50 p-3 rounded-2xl mt-1.5 line-clamp-2">
+                                {job.description}
+                              </p>
+                            </div>
+
+                            <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[10px] font-bold text-slate-400 font-sans">
+                              <span>
+                                {currentLanguage === 'en' ? 'Posted: ' : 'பதிவிடப்பட்டது: '}
+                                {new Date(job.postedAt).toLocaleDateString(currentLanguage === 'en' ? 'en-US' : 'ta-IN', {
+                                  month: 'short',
+                                  day: 'numeric'
+                                })}
+                              </span>
+                              <span className="text-emerald-600 uppercase font-black tracking-wider">
+                                {currentLanguage === 'en' ? 'No action needed' : 'அமைப்பு தேவையில்லை'}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </main>
-            </div>
+            </motion.div>
           )}
 
           {/* Footer */}
@@ -740,8 +839,6 @@ export default function App() {
               />
             )}
           </AnimatePresence>
-        </>
-      )}
     </div>
   );
 }

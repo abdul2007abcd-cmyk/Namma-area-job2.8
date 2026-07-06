@@ -64,18 +64,18 @@ export default function AreaSelectorModal({
   };
 
   const content = (
-    <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl border-2 border-orange-100 overflow-hidden">
+    <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[85vh] sm:max-h-[90vh]">
       {/* Header section with language toggle */}
-      <div className="p-6 bg-orange-600 text-white flex justify-between items-center">
+      <div className="px-5 py-3.5 bg-linear-to-r from-orange-600 to-amber-500 text-white flex justify-between items-center shrink-0 shadow-sm">
         <div className="flex items-center gap-2">
-          <div className="bg-white text-orange-600 p-2 rounded-lg font-black text-xl tracking-tight shadow-xs">
+          <div className="bg-white text-orange-600 w-8 h-8 rounded-xl font-sans font-black text-sm flex items-center justify-center tracking-tight shadow-md">
             NAJ
           </div>
           <div>
-            <span className="font-sans font-black text-white text-lg tracking-tight block leading-none">
+            <span className="font-sans font-black text-white text-base tracking-tight block leading-none">
               {t.brandName}
             </span>
-            <span className="block text-[10px] text-orange-200 font-mono font-bold tracking-wider uppercase mt-1">
+            <span className="block text-[9px] text-orange-100 font-mono font-bold tracking-wider uppercase mt-0.5">
               CHENNAI
             </span>
           </div>
@@ -85,31 +85,34 @@ export default function AreaSelectorModal({
         <button
           onClick={onLanguageToggle}
           id="toggle-lang-onboarding"
-          className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-orange-700/60 hover:bg-orange-700 text-xs font-bold text-white transition-all cursor-pointer border border-orange-500/30 shadow-xs"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 hover:bg-white/25 active:scale-95 text-xs font-bold text-white transition-all cursor-pointer border border-white/10 shadow-xs"
         >
-          <Globe className="w-3.5 h-3.5 text-orange-200" />
+          <Globe className="w-3.5 h-3.5 text-orange-100" />
           {currentLanguage === 'en' ? 'தமிழ்' : 'English'}
         </button>
       </div>
 
-      <div className="p-6">
-        <h2 className="text-xl font-black text-slate-800 font-sans tracking-tight mb-1 text-center md:text-left">
-          {t.welcomeTitle}
-        </h2>
-        <p className="text-sm text-slate-500 leading-relaxed mb-6 text-center md:text-left">
-          {t.welcomeSubtitle}
-        </p>
+      {/* Scrollable Container for Form and Grid */}
+      <div className="p-5 overflow-y-auto flex-1 space-y-5 scrollbar-thin">
+        <div className="text-center sm:text-left">
+          <h2 className="text-lg font-black text-slate-800 font-sans tracking-tight mb-1">
+            {t.welcomeTitle}
+          </h2>
+          <p className="text-xs text-slate-500 leading-relaxed">
+            {t.welcomeSubtitle}
+          </p>
+        </div>
 
         {/* Custom area text field input */}
-        <form onSubmit={handleCustomSubmit} className="mb-6">
-          <div className="relative">
-            <Search className="absolute left-4 top-3.5 w-5 h-5 text-slate-400" />
+        <form onSubmit={handleCustomSubmit} className="relative">
+          <div className="relative group">
+            <Search className="absolute left-4 top-3.5 w-4 h-4 text-slate-400 group-focus-within:text-orange-500 transition-colors" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={t.enterAreaPlaceholder}
-              className="w-full pl-11 pr-28 py-3.5 bg-slate-50 border-2 border-slate-200 focus:border-orange-500 focus:bg-white rounded-xl font-sans text-sm text-slate-800 placeholder-slate-400 focus:outline-hidden transition-all"
+              className="w-full pl-10 pr-24 py-3 bg-slate-50 hover:bg-slate-50/80 focus:bg-white border border-slate-200 focus:border-orange-500 rounded-2xl font-sans text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-hidden transition-all shadow-xs"
               id="area-onboarding-input"
               autoFocus={isOnboarding}
             />
@@ -117,7 +120,7 @@ export default function AreaSelectorModal({
               <button
                 type="submit"
                 id="submit-custom-area-btn"
-                className="absolute right-2 top-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg font-sans text-xs font-bold transition-all cursor-pointer shadow-xs"
+                className="absolute right-1.5 top-1.5 bottom-1.5 px-3.5 bg-orange-600 hover:bg-orange-700 text-white rounded-xl font-sans text-xs font-black transition-all cursor-pointer shadow-xs active:scale-95"
               >
                 {t.setAreaButton}
               </button>
@@ -126,11 +129,11 @@ export default function AreaSelectorModal({
         </form>
 
         {/* Grid of popular neighborhoods */}
-        <div className="mb-4">
-          <p className="text-xs font-bold text-slate-400 font-sans tracking-wider uppercase mb-3">
+        <div>
+          <p className="text-[10px] font-black text-slate-400 font-sans tracking-wider uppercase mb-3">
             {t.suggestedAreas}
           </p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-2 gap-2">
             {filteredAreas.map((area) => {
               const displayTamil = AREA_MAPPINGS[area];
               return (
@@ -138,15 +141,15 @@ export default function AreaSelectorModal({
                   key={area}
                   onClick={() => onSelectArea(area)}
                   id={`area-btn-${area.toLowerCase().replace(/\s+/g, '-')}`}
-                  className="flex items-center gap-2 p-3 text-left bg-slate-50 hover:bg-orange-50 border-2 border-slate-150 hover:border-orange-200 rounded-xl transition-all cursor-pointer group"
+                  className="flex items-center gap-2 px-3 py-2.5 text-left bg-slate-50/50 hover:bg-orange-50/60 border border-slate-150 hover:border-orange-300 rounded-2xl transition-all cursor-pointer group active:scale-[0.98] min-h-[48px]"
                 >
                   <MapPin className="w-4 h-4 text-slate-400 group-hover:text-orange-500 transition-colors shrink-0" />
                   <div className="min-w-0">
-                    <span className="block text-xs font-bold text-slate-800 truncate group-hover:text-orange-900 font-sans">
+                    <span className="block text-xs font-extrabold text-slate-800 leading-tight group-hover:text-orange-900 font-sans">
                       {area}
                     </span>
                     {displayTamil && (
-                      <span className="block text-[10px] text-slate-400 truncate group-hover:text-orange-700">
+                      <span className="block text-[10px] font-semibold text-slate-400 group-hover:text-orange-700 leading-none mt-0.5">
                         {displayTamil}
                       </span>
                     )}
@@ -165,11 +168,11 @@ export default function AreaSelectorModal({
         </div>
 
         {/* Option to show all areas / bypass */}
-        <div className="mt-6 pt-5 border-t border-slate-100 flex justify-between items-center">
+        <div className="pt-4 border-t border-slate-100 flex justify-between items-center shrink-0">
           <button
             onClick={() => onSelectArea('All')}
             id="browse-all-areas-onboarding"
-            className="text-xs font-bold text-orange-600 hover:text-orange-700 font-sans cursor-pointer flex items-center gap-1"
+            className="text-xs font-black text-orange-600 hover:text-orange-700 font-sans cursor-pointer flex items-center gap-1 active:scale-95 transition-transform"
           >
             🗺️ {t.allAreas}
           </button>
@@ -178,7 +181,7 @@ export default function AreaSelectorModal({
             <button
               onClick={onClose}
               id="close-area-modal"
-              className="text-xs font-bold text-slate-400 hover:text-slate-600 font-sans cursor-pointer"
+              className="text-xs font-black text-slate-400 hover:text-slate-600 font-sans cursor-pointer active:scale-95 transition-transform"
             >
               Cancel
             </button>
