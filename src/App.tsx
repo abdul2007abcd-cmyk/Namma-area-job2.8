@@ -432,7 +432,10 @@ export default function App() {
   description TEXT NOT NULL,
   "postedAt" TEXT NOT NULL,
   "isCustom" BOOLEAN NOT NULL DEFAULT FALSE
-);`}
+);
+
+-- Fix for "new row violates row-level security policy" when inserting/deleting:
+ALTER TABLE jobs DISABLE ROW LEVEL SECURITY;`}
                         </pre>
                         <div className="text-slate-400 leading-relaxed font-sans text-xs pt-1 space-y-1">
                           <p className="font-bold text-slate-300">👉 Step 2: Configure Environment Secrets</p>

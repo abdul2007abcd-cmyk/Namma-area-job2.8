@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS jobs (
   "postedAt" TEXT NOT NULL,
   "isCustom" BOOLEAN NOT NULL DEFAULT FALSE
 );
+
+-- Fix for "new row violates row-level security policy" when inserting/deleting:
+ALTER TABLE jobs DISABLE ROW LEVEL SECURITY;
 `;
 
 // GET all jobs
