@@ -78,8 +78,21 @@ export default function App() {
           throw error;
         }
 
-        setJobs(data && data.length > 0 ? data : SEED_JOBS);
+        const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        const validJobs = (data || []).filter(job => new Date(job.postedAt).getTime() >= sevenDaysAgo);
+
+        setJobs(validJobs.length > 0 ? validJobs : SEED_JOBS);
         setUsingFallback(false);
+
+        // Background cleanup of expired posts older than 7 days
+        const thresholdIso = new Date(sevenDaysAgo).toISOString();
+        supabase.from('jobs').delete().lt('postedAt', thresholdIso).then(({ error: deleteError }) => {
+          if (deleteError) {
+            console.warn('Background cleanup error:', deleteError);
+          } else {
+            console.log('Background cleanup completed successfully.');
+          }
+        });
       } catch (error) {
         console.log('Database synchronization fallback.', error);
         setJobs(SEED_JOBS);
@@ -110,25 +123,7 @@ export default function App() {
     localStorage.setItem('namma-area-job-lang', nextLang);
   };
 
-  const handleDeleteJob = async (id: string) => {
-    if (confirm(currentLanguage === 'en' ? 'Are you sure you want to delete this job vacancy listing?' : 'இந்த வேலைவாய்ப்பு விளம்பரத்தை நிச்சயமாக நீக்க வேண்டுமா?')) {
-      try {
-        const { error } = await supabase
-          .from('jobs')
-          .delete()
-          .eq('id', id);
-
-        if (error) {
-          throw error;
-        }
-
-        setJobs((prev) => prev.filter((j) => j.id !== id));
-      } catch (error) {
-        console.log('Syncing delete action offline.', error);
-        alert(currentLanguage === 'en' ? 'Failed to delete listing from the database.' : 'தரவுத்தளத்திலிருந்து விளம்பரத்தை நீக்க முடியவில்லை.');
-      }
-    }
-  };
+  // Delete option has been disabled and posts are automatically removed after 7 days
 
   const handleAddJob = async (newJobData: Omit<Job, 'id' | 'postedAt' | 'isCustom'>) => {
     try {
@@ -180,9 +175,20 @@ export default function App() {
           throw error;
         }
 
-        setJobs(data && data.length > 0 ? data : SEED_JOBS);
+        const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        const validJobs = (data || []).filter(job => new Date(job.postedAt).getTime() >= sevenDaysAgo);
+
+        setJobs(validJobs.length > 0 ? validJobs : SEED_JOBS);
         setUsingFallback(false);
         setActiveTab('browse');
+
+        // Background cleanup of expired posts older than 7 days
+        const thresholdIso = new Date(sevenDaysAgo).toISOString();
+        supabase.from('jobs').delete().lt('postedAt', thresholdIso).then(({ error: deleteError }) => {
+          if (deleteError) {
+            console.warn('Background cleanup error:', deleteError);
+          }
+        });
       } catch (error) {
         console.log('Syncing reload action offline.', error);
         setUsingFallback(true);
@@ -198,7 +204,7 @@ export default function App() {
   const t = translations[currentLanguage];
   const categories = CATEGORIES[currentLanguage];
 
-  // Proximity filter and sorting logic
+  // Area and Category filter and sorting logic
   const filteredAndSortedJobs = useMemo(() => {
     // 1. Filter by category
     let list = jobs;
@@ -206,7 +212,13 @@ export default function App() {
       list = list.filter((j) => j.category === selectedCategory);
     }
 
-    // 2. Filter by search query
+    // 2. Filter by selected area (if not 'All' or empty)
+    if (selectedArea && selectedArea !== 'All') {
+      const areaLower = selectedArea.toLowerCase();
+      list = list.filter((j) => j.area.toLowerCase() === areaLower);
+    }
+
+    // 3. Filter by search query
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       list = list.filter(
@@ -219,34 +231,11 @@ export default function App() {
       );
     }
 
-    // 3. Sort/Group: selected area first, then others. Within each, sorted by date (newest first)
-    const areaLower = selectedArea.toLowerCase();
-
+    // 4. Sort by date (newest first)
     return [...list].sort((a, b) => {
-      const isANearby = selectedArea !== 'All' && a.area.toLowerCase() === areaLower;
-      const isBNearby = selectedArea !== 'All' && b.area.toLowerCase() === areaLower;
-
-      if (isANearby && !isBNearby) return -1;
-      if (!isANearby && isBNearby) return 1;
-
-      // Secondary sort: newest first
       return new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime();
     });
   }, [jobs, selectedCategory, searchQuery, selectedArea]);
-
-  // Statistics for active area vs surrounding areas
-  const stats = useMemo(() => {
-    const areaLower = selectedArea.toLowerCase();
-    const inAreaCount = jobs.filter(
-      (j) => selectedArea !== 'All' && j.area.toLowerCase() === areaLower
-    ).length;
-    const totalCount = jobs.length;
-    return {
-      inArea: inAreaCount,
-      total: totalCount,
-      surrounding: totalCount - inAreaCount
-    };
-  }, [jobs, selectedArea]);
 
   // Determine if onboarding overlay is needed
   const isRoleOnboarding = userRole === null;
@@ -457,25 +446,11 @@ export default function App() {
                       <span>
                         {currentLanguage === 'en' ? (
                           <>
-                            Found <span className="font-black text-blue-600">{filteredAndSortedJobs.length}</span> {t.matchingJobs}.{' '}
-                            {stats.inArea > 0 ? (
-                              <>
-                                <span className="font-black text-slate-800">{stats.inArea}</span> directly in {selectedArea}, and others nearby.
-                              </>
-                            ) : (
-                              <>No listings directly in {selectedArea} right now; displaying other Chennai areas below.</>
-                            )}
+                            Found <span className="font-black text-blue-600">{filteredAndSortedJobs.length}</span> {t.matchingJobs} in <span className="font-black text-slate-800">{selectedArea}</span>.
                           </>
                         ) : (
                           <>
-                            <span className="font-black text-blue-600">{filteredAndSortedJobs.length}</span> {t.matchingJobs}.{' '}
-                            {stats.inArea > 0 ? (
-                              <>
-                                <span className="font-black text-slate-800">{stats.inArea}</span> வேலைகள் {AREA_MAPPINGS[selectedArea] || selectedArea}-இல் உள்ளன.
-                              </>
-                            ) : (
-                              <>{AREA_MAPPINGS[selectedArea] || selectedArea} பகுதியில் தற்போது வேலைகள் எதுவும் இல்லை; மற்ற பகுதிகள் கீழே உள்ளன.</>
-                            )}
+                            {AREA_MAPPINGS[selectedArea] || selectedArea} பகுதியில் <span className="font-black text-blue-600">{filteredAndSortedJobs.length}</span> {t.matchingJobs} உள்ளன.
                           </>
                         )}
                       </span>
@@ -528,7 +503,6 @@ export default function App() {
                         job={job}
                         userArea={selectedArea}
                         currentLanguage={currentLanguage}
-                        onDelete={job.isCustom ? handleDeleteJob : undefined}
                       />
                     ))
                   )}
