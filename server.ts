@@ -13,7 +13,28 @@ import { SEED_JOBS } from './src/data/seedJobs.js';
 const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+// Security Middleware: Set security headers to mitigate clickjacking, MIME sniffing, and cross-site scripting
+app.use((req, res, next) => {
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+
+// Set JSON payload limit to 50KB to block heavy payloads / DoS injection attacks
+app.use(express.json({ limit: '50kb' }));
+
+// Input sanitization utility to prevent stored XSS
+function sanitizeInput(text: any): string {
+  if (typeof text !== 'string') return '';
+  return text
+    .replace(/<script[^>]*>([\s\S]*?)<\/script>/gi, '') // Strip script blocks
+    .replace(/<[^>]*>/g, '') // Strip remaining HTML tags
+    .replace(/javascript:/gi, '') // Strip inline protocols
+    .replace(/on\w+\s*=/gi, '') // Strip JS events like onload/onerror
+    .trim();
+}
 
 // Initialize Supabase Client
 const supabaseUrl = 'https://ysivkhwtwsrupkbkrlvv.supabase.co';
@@ -73,7 +94,7 @@ app.get('/api/jobs', async (req, res) => {
   }
 });
 
-// POST a new job
+// POST a new job with strict sanitization, input validation, and character limits
 app.post('/api/jobs', async (req, res) => {
   const { businessName, role, category, salary, location, area, contactNumber, description } = req.body;
 
@@ -81,16 +102,46 @@ app.post('/api/jobs', async (req, res) => {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
+  // 1. Sanitize all incoming fields to neutralize any XSS / scripting payloads
+  const cleanBusinessName = sanitizeInput(businessName);
+  const cleanRole = sanitizeInput(role);
+  const cleanCategory = sanitizeInput(category);
+  const cleanSalary = sanitizeInput(salary);
+  const cleanArea = sanitizeInput(area);
+  const cleanLocation = sanitizeInput(location || area);
+  const cleanDescription = sanitizeInput(description);
+  
+  // Clean phone number (digits only)
+  const cleanContactNumber = String(contactNumber).replace(/\D/g, '');
+
+  // 2. Perform length validation to mitigate DoS / database memory bloating attacks
+  if (
+    cleanBusinessName.length === 0 || cleanBusinessName.length > 100 ||
+    cleanRole.length === 0 || cleanRole.length > 100 ||
+    cleanCategory.length === 0 || cleanCategory.length > 50 ||
+    cleanSalary.length === 0 || cleanSalary.length > 50 ||
+    cleanArea.length === 0 || cleanArea.length > 100 ||
+    cleanLocation.length > 250 ||
+    cleanDescription.length === 0 || cleanDescription.length > 1000
+  ) {
+    return res.status(400).json({ error: 'Invalid input or field length limit exceeded.' });
+  }
+
+  // Enforce phone number standard lengths (10-15 digits)
+  if (cleanContactNumber.length < 10 || cleanContactNumber.length > 15) {
+    return res.status(400).json({ error: 'Contact phone number must be between 10 and 15 digits.' });
+  }
+
   const newJob = {
     id: `job-${Date.now()}`,
-    businessName,
-    role,
-    category,
-    salary,
-    location: location || area, // fallback location to area if empty
-    area,
-    contactNumber,
-    description,
+    businessName: cleanBusinessName,
+    role: cleanRole,
+    category: cleanCategory,
+    salary: cleanSalary,
+    location: cleanLocation,
+    area: cleanArea,
+    contactNumber: cleanContactNumber,
+    description: cleanDescription,
     postedAt: new Date().toISOString(),
     isCustom: true
   };

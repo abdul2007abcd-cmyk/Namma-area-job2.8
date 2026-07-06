@@ -30,10 +30,20 @@ import AreaSelectorModal from './components/AreaSelectorModal';
 import JobCard from './components/JobCard';
 import JobForm from './components/JobForm';
 import { motion, AnimatePresence } from 'motion/react';
-import { supabase } from './lib/supabase';
 // Local storage based job notices board
 
 
+
+// Sanitization helper to protect against Cross-Site Scripting (XSS) stored payloads
+function sanitizeInput(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/<script[^>]*>([\s\S]*?)<\/script>/gi, '') // Remove script blocks
+    .replace(/<[^>]*>/g, '') // Strip all HTML tags
+    .replace(/javascript:/gi, '') // Block Javascript link injections
+    .replace(/on\w+\s*=/gi, '') // Block Event handler attributes
+    .trim();
+}
 
 export default function App() {
   // --- STATE ---
@@ -91,29 +101,24 @@ export default function App() {
     async function initJobs() {
       setLoading(true);
       try {
-        const { data, error } = await supabase
-          .from('jobs')
-          .select('*')
-          .order('postedAt', { ascending: false });
-
-        if (error) {
-          throw error;
+        const response = await fetch('/api/jobs');
+        if (!response.ok) {
+          throw new Error('Backend failed to load jobs');
         }
+        const resData = await response.json();
+        const data = resData.jobs || [];
 
         const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-        const validJobs = (data || []).filter(job => new Date(job.postedAt).getTime() >= sevenDaysAgo);
+        const validJobs = data.filter((job: any) => new Date(job.postedAt).getTime() >= sevenDaysAgo);
 
         setJobs(validJobs.length > 0 ? validJobs : SEED_JOBS);
-        setUsingFallback(false);
+        setUsingFallback(resData.usingFallback || false);
+        setDbError(resData.error || null);
+        setSqlHelp(resData.sqlHelp || null);
 
-        // Background cleanup of expired posts older than 7 days
-        const thresholdIso = new Date(sevenDaysAgo).toISOString();
-        supabase.from('jobs').delete().lt('postedAt', thresholdIso).then(({ error: deleteError }) => {
-          if (deleteError) {
-            console.warn('Background cleanup error:', deleteError);
-          } else {
-            console.log('Background cleanup completed successfully.');
-          }
+        // Safely trigger background cleanup via backend Express router
+        fetch('/api/jobs/cleanup', { method: 'POST' }).catch((err) => {
+          console.warn('Background cleanup trigger failed:', err);
         });
       } catch (error) {
         console.log('Database synchronization fallback.', error);
@@ -154,27 +159,35 @@ export default function App() {
 
   const handleAddJob = async (newJobData: Omit<Job, 'id' | 'postedAt' | 'isCustom'>) => {
     try {
-      const newJob = {
-        id: `job-${Date.now()}`,
-        ...newJobData,
-        location: newJobData.location || newJobData.area,
-        postedAt: new Date().toISOString(),
-        isCustom: true
+      // Clean inputs on frontend before submission (defense in depth)
+      const sanitizedJobData = {
+        businessName: sanitizeInput(newJobData.businessName),
+        role: sanitizeInput(newJobData.role),
+        category: sanitizeInput(newJobData.category),
+        salary: sanitizeInput(newJobData.salary),
+        area: sanitizeInput(newJobData.area),
+        location: sanitizeInput(newJobData.location || newJobData.area),
+        contactNumber: newJobData.contactNumber.replace(/\D/g, ''),
+        description: sanitizeInput(newJobData.description)
       };
 
-      const { data, error } = await supabase
-        .from('jobs')
-        .insert([newJob])
-        .select()
-        .single();
+      const response = await fetch('/api/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sanitizedJobData)
+      });
 
-      if (error) {
-        throw error;
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to save job');
       }
+
+      const resData = await response.json();
+      const savedJob = resData.job;
       
-      if (data) {
-        setJobs((prev) => [data, ...prev]);
-        const updatedIds = [...myPostedIds, data.id];
+      if (savedJob) {
+        setJobs((prev) => [savedJob, ...prev]);
+        const updatedIds = [...myPostedIds, savedJob.id];
         setMyPostedIds(updatedIds);
         localStorage.setItem('namma-area-posted-jobs', JSON.stringify(updatedIds));
       }
@@ -185,7 +198,10 @@ export default function App() {
       setSelectedCategory('all'); // Reset filters
     } catch (error) {
       console.log('Syncing post action offline.', error);
-      alert(currentLanguage === 'en' ? 'Failed to publish job vacancy. Please try again.' : 'விளம்பரத்தை வெளியிட முடியவில்லை. மீண்டும் முயலவும்.');
+      alert(currentLanguage === 'en' 
+        ? `Failed to publish job vacancy: ${error instanceof Error ? error.message : 'Please check your connection.'}` 
+        : `விளம்பரத்தை வெளியிட முடியவில்லை: ${error instanceof Error ? error.message : 'தயவுசெய்து மீண்டும் முயலவும்.'}`
+      );
     }
   };
 
@@ -193,28 +209,23 @@ export default function App() {
     if (confirm(currentLanguage === 'en' ? 'Reload and refresh all job listings from the cloud database?' : 'மேகக்கணி தரவுத்தளத்திலிருந்து அனைத்து வேலைகளையும் புதுப்பிக்கவா?')) {
       setLoading(true);
       try {
-        const { data, error } = await supabase
-          .from('jobs')
-          .select('*')
-          .order('postedAt', { ascending: false });
-
-        if (error) {
-          throw error;
+        const response = await fetch('/api/jobs');
+        if (!response.ok) {
+          throw new Error('Backend failed to load jobs');
         }
+        const resData = await response.json();
+        const data = resData.jobs || [];
 
         const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-        const validJobs = (data || []).filter(job => new Date(job.postedAt).getTime() >= sevenDaysAgo);
+        const validJobs = data.filter((job: any) => new Date(job.postedAt).getTime() >= sevenDaysAgo);
 
         setJobs(validJobs.length > 0 ? validJobs : SEED_JOBS);
-        setUsingFallback(false);
+        setUsingFallback(resData.usingFallback || false);
         setActiveTab('browse');
 
-        // Background cleanup of expired posts older than 7 days
-        const thresholdIso = new Date(sevenDaysAgo).toISOString();
-        supabase.from('jobs').delete().lt('postedAt', thresholdIso).then(({ error: deleteError }) => {
-          if (deleteError) {
-            console.warn('Background cleanup error:', deleteError);
-          }
+        // Trigger safe backend cleanup
+        fetch('/api/jobs/cleanup', { method: 'POST' }).catch((err) => {
+          console.warn('Background cleanup trigger failed:', err);
         });
       } catch (error) {
         console.log('Syncing reload action offline.', error);
