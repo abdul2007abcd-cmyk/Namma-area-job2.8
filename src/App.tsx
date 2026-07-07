@@ -21,7 +21,8 @@ import {
   Database,
   Copy,
   Check,
-  RefreshCw
+  RefreshCw,
+  Trash2
 } from 'lucide-react';
 import { Job, Language } from './types';
 import { translations, CATEGORIES, AREA_MAPPINGS } from './translations';
@@ -205,6 +206,40 @@ export default function App() {
     }
   };
 
+  const handleDeleteJob = async (jobId: string) => {
+    const confirmMessage = currentLanguage === 'en'
+      ? 'Are you sure you want to delete this job listing?'
+      : 'இந்த வேலைவாய்ப்பு விளம்பரத்தை நிச்சயமாக நீக்க விரும்புகிறீர்களா?';
+    
+    if (!confirm(confirmMessage)) return;
+
+    try {
+      const response = await fetch(`/api/jobs/${jobId}`, {
+        method: 'DELETE'
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete job');
+      }
+
+      // Remove from state
+      setJobs((prev) => prev.filter((j) => j.id !== jobId));
+      
+      // Remove from myPostedIds
+      const updatedIds = myPostedIds.filter((id) => id !== jobId);
+      setMyPostedIds(updatedIds);
+      localStorage.setItem('namma-area-posted-jobs', JSON.stringify(updatedIds));
+
+    } catch (error) {
+      console.error('Error deleting job:', error);
+      alert(currentLanguage === 'en'
+        ? `Failed to delete job: ${error instanceof Error ? error.message : 'Please try again.'}`
+        : `விளம்பரத்தை நீக்க முடியவில்லை: ${error instanceof Error ? error.message : 'மீண்டும் முயலவும்.'}`
+      );
+    }
+  };
+
   const handleResetApp = async () => {
     if (confirm(currentLanguage === 'en' ? 'Reload and refresh all job listings from the cloud database?' : 'மேகக்கணி தரவுத்தளத்திலிருந்து அனைத்து வேலைகளையும் புதுப்பிக்கவா?')) {
       setLoading(true);
@@ -329,10 +364,13 @@ export default function App() {
                 </div>
 
                 {/* Big Logo */}
-                <div className="w-20 h-20 bg-blue-600 rounded-3xl flex items-center justify-center text-white font-black shadow-md relative overflow-hidden">
-                  <span className="text-4xl font-black select-none">ந</span>
-                  {/* Subtle accent light */}
-                  <div className="absolute top-0 right-0 w-8 h-8 bg-white/20 rounded-full blur-xs pointer-events-none" />
+                <div className="w-24 h-24 rounded-full overflow-hidden shadow-md border-2 border-slate-100 flex items-center justify-center bg-white">
+                  <img 
+                    src="/src/assets/images/namma_area_job_1783436681607.jpg" 
+                    alt="Namma Area Job Logo" 
+                    className="w-full h-full object-cover"
+                    referrerPolicy="no-referrer"
+                  />
                 </div>
 
                 <div className="space-y-2">
@@ -468,8 +506,13 @@ export default function App() {
                 <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
                   {/* Brand Logo */}
                   <div className="flex items-center gap-2.5 cursor-pointer" onClick={() => setSelectedCategory('all')}>
-                    <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white font-black shadow-xs">
-                      <span className="text-xl font-black">ந</span>
+                    <div className="w-10 h-10 rounded-full border border-slate-100 flex items-center justify-center bg-white overflow-hidden shadow-xs">
+                      <img 
+                        src="/src/assets/images/namma_area_job_1783436681607.jpg" 
+                        alt="Namma Area Job Logo" 
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
                     </div>
                     <div>
                       <h1 className="font-sans font-black text-lg text-slate-800 tracking-tight leading-none">
@@ -725,8 +768,13 @@ export default function App() {
                 <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
                   {/* Brand Logo */}
                   <div className="flex items-center gap-2.5 cursor-pointer">
-                    <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white font-black shadow-xs">
-                      <span className="text-xl font-black">ந</span>
+                    <div className="w-10 h-10 rounded-full border border-slate-100 flex items-center justify-center bg-white overflow-hidden shadow-xs">
+                      <img 
+                        src="/src/assets/images/namma_area_job_1783436681607.jpg" 
+                        alt="Namma Area Job Logo" 
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
                     </div>
                     <div>
                       <h1 className="font-sans font-black text-lg text-slate-800 tracking-tight leading-none">
@@ -951,9 +999,14 @@ export default function App() {
                                   day: 'numeric'
                                 })}
                               </span>
-                              <span className="text-emerald-600 uppercase font-black tracking-wider">
-                                {currentLanguage === 'en' ? 'No action needed' : 'அமைப்பு தேவையில்லை'}
-                              </span>
+                              <button
+                                onClick={() => handleDeleteJob(job.id)}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-rose-600 hover:text-white bg-rose-50 hover:bg-rose-600 rounded-xl border border-rose-150 hover:border-rose-600 text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer shadow-xs active:scale-95"
+                                title={t.deleteJob}
+                              >
+                                <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                                <span>{t.deleteJob}</span>
+                              </button>
                             </div>
                           </div>
                         ))}

@@ -51,6 +51,7 @@ export interface TranslationSet {
   whatsappMessage: string;
   whatsappTextTemplate: string;
   shareJob: string;
+  deleteJob: string;
   
   // Job Form
   postJobTitle: string;
