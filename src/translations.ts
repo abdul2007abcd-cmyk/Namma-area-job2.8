@@ -32,6 +32,7 @@ export const translations: Record<'en' | 'ta', TranslationSet> = {
     callNow: 'Call Shop',
     whatsappMessage: 'WhatsApp',
     whatsappTextTemplate: 'Hello, I saw your job posting on Namma Area Job for the role of {role}. Is this position still open?',
+    shareJob: 'Share with Friends 📢',
     
     postJobTitle: 'Post a Free Job Listing',
     postJobSubtitle: 'Fill this simple form. Your job will be immediately visible to people in your area!',
@@ -84,6 +85,7 @@ export const translations: Record<'en' | 'ta', TranslationSet> = {
     callNow: 'கடையில் பேச',
     whatsappMessage: 'வாட்ஸ்அப்',
     whatsappTextTemplate: 'வணக்கம், நம்ம ஏரியா ஜாப்-இல் நீங்கள் வெளியிட்ட {role} வேலைவாய்ப்பு விளம்பரத்தைப் பார்த்தேன். இந்த வேலை இன்னும் காலியாக உள்ளதா?',
+    shareJob: 'நண்பர்களுக்குப் பகிர் 📢',
     
     postJobTitle: 'இலவச வேலைவாய்ப்பு விளம்பரம்',
     postJobSubtitle: 'இந்த எளிய படிவத்தை நிரப்பவும். உங்கள் ஏரியாவில் உள்ளவர்களுக்கு உங்கள் வேலை உடனே தெரியவரும்!',

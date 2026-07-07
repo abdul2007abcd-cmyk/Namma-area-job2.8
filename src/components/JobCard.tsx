@@ -86,22 +86,38 @@ export default function JobCard({ job, userArea, currentLanguage }: JobCardProps
   const whatsappUrl = `https://wa.me/91${cleanNumber}?text=${encodedMsg}`;
   const telUrl = `tel:+91${cleanNumber}`;
 
-  // Copy link to share
+  // Copy or share link to friends
   const handleShare = async () => {
+    const isTa = currentLanguage === 'ta';
+    const titleText = `${job.role} - ${job.businessName}`;
+    const shareText = isTa 
+      ? `📢 *புது வேலைவாய்ப்பு!* 📢\n\n💼 *வேலை:* ${job.role}\n🏢 *நிறுவனம்:* ${job.businessName}\n💵 *சம்பளம்:* ${job.salary}\n📍 *இடம்:* ${job.area}\n📞 *தொடர்புக்கு:* ${job.contactNumber}\n\nஉடனே விண்ணப்பிக்க நம்ம ஏரியா ஜாப் தளத்திற்கு வரவும்:\n🔗 ${window.location.href}`
+      : `📢 *New Job Opening!* 📢\n\n💼 *Role:* ${job.role}\n🏢 *Shop:* ${job.businessName}\n💵 *Salary:* ${job.salary}\n📍 *Location:* ${job.area}\n📞 *Contact:* ${job.contactNumber}\n\nApply directly via Namma Area Job:\n🔗 ${window.location.href}`;
+
     try {
-      const shareText = `*${job.role}* at *${job.businessName}*\nSalary: ${job.salary}\nLocation: ${job.area}\nContact: ${job.contactNumber}\nApply via Namma Area Job: ${window.location.href}`;
       if (navigator.share) {
         await navigator.share({
-          title: `${job.role} at ${job.businessName}`,
+          title: titleText,
           text: shareText,
+          url: window.location.href
         });
-      } else {
-        await navigator.clipboard.writeText(shareText);
-        alert(currentLanguage === 'ta' ? 'விவரங்கள் கிளிப்போர்டில் நகலெடுக்கப்பட்டது!' : 'Job details copied to clipboard!');
+        return;
       }
     } catch (e) {
-      // Ignored
+      console.warn('Web Share API error, falling back:', e);
     }
+
+    // Fallback: Open WhatsApp link to send to friends
+    const encodedShareText = encodeURIComponent(shareText);
+    const whatsappShareUrl = `https://api.whatsapp.com/send?text=${encodedShareText}`;
+    
+    const link = document.createElement('a');
+    link.href = whatsappShareUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   return (
@@ -187,14 +203,6 @@ export default function JobCard({ job, userArea, currentLanguage }: JobCardProps
             <Calendar className="w-3.5 h-3.5" />
             {t.postedOn}: {relativeTime}
           </span>
-          <button 
-            onClick={handleShare}
-            id={`share-btn-${job.id}`}
-            className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer transition-colors"
-            title="Share Job"
-          >
-            <Share2 className="w-4 h-4" />
-          </button>
         </div>
 
         {/* Core Mobile Actions (Direct Call / WhatsApp) */}
@@ -221,6 +229,16 @@ export default function JobCard({ job, userArea, currentLanguage }: JobCardProps
             {t.callNow}
           </a>
         </div>
+
+        {/* Share with Friends prominent action */}
+        <button
+          onClick={handleShare}
+          id={`share-action-${job.id}`}
+          className="w-full flex items-center justify-center gap-2 mt-2 py-2.5 bg-blue-50/75 hover:bg-blue-100 text-blue-700 rounded-xl font-bold text-xs uppercase tracking-wider transition-all active:scale-95 cursor-pointer text-center border border-blue-100"
+        >
+          <Share2 className="w-4 h-4 shrink-0" />
+          {t.shareJob}
+        </button>
       </div>
     </motion.div>
   );

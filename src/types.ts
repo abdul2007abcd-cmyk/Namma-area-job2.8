@@ -50,6 +50,7 @@ export interface TranslationSet {
   callNow: string;
   whatsappMessage: string;
   whatsappTextTemplate: string;
+  shareJob: string;
   
   // Job Form
   postJobTitle: string;
